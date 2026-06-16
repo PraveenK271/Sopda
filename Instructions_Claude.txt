@@ -1,0 +1,555 @@
+# ERP Software Development Instructions
+
+## Project Name
+
+Gemini ERP
+
+## Objective
+
+Build a Windows-based Enterprise Resource Planning (ERP) application similar to Tally ERP, specifically designed for Indian trading and distribution businesses.
+
+The software should be optimized for:
+
+* Inventory Management
+* GST Billing
+* Accounting
+* Purchase Management
+* Sales Management
+* OCR-Based Invoice Processing
+* AI-Powered Business Intelligence
+
+The application must run locally on Windows systems and support future migration to multi-user environments.
+
+---
+
+# Technology Stack
+
+## Frontend
+
+* Python
+* PySide6 (Qt)
+* Modern responsive desktop UI
+* Dark Mode and Light Mode support
+
+## Backend
+
+* Python
+* Service-oriented architecture
+
+## Database
+
+* Microsoft SQL Server
+* SQLAlchemy ORM
+
+## Reporting
+
+* ReportLab PDF Engine
+* OpenPyXL Excel Export
+
+## OCR
+
+* PaddleOCR
+
+## AI Layer
+
+* OpenAI Compatible APIs
+* Local LLM Support
+
+## Packaging
+
+* PyInstaller
+* Windows Installer
+
+---
+
+# Core Modules
+
+## Module 1: Company Management
+
+### Features
+
+* Financial Year Management
+* Financial Year Closing
+* Company Logo Management
+* Company Backup
+* Company Restore
+
+### Requirements
+
+* Maintain separate financial years
+* Lock previous financial years
+* Allow year-end closing process
+* Maintain company profile details
+
+---
+
+## Module 2: User Management
+
+### Features
+
+* User Login
+* Role-Based Access Control
+
+### Roles
+
+#### Administrator
+
+Full access
+
+#### Accountant
+
+Accounting
+Purchases
+Sales
+Reports
+
+#### Inventory Manager
+
+Inventory
+Purchases
+Stock Reports
+
+#### Sales User
+
+Sales
+Customers
+Sales Reports
+
+---
+
+## Module 3: Customer Management
+
+### Features
+
+* Customer Master
+* GSTIN
+* Contact Persons
+* Credit Limits
+* Multiple Shipping Addresses
+
+### Requirements
+
+Track:
+
+* Outstanding Amount
+* Credit Utilization
+* Purchase History
+
+---
+
+## Module 4: Supplier Management
+
+### Features
+
+* Vendor Master
+* GSTIN
+* Outstanding Tracking
+
+### Requirements
+
+Track:
+
+* Purchase History
+* Pending Payments
+* Supplier Ledger
+
+---
+
+## Module 5: Item Master
+
+### Features
+
+* Item Code
+* Item Name
+* HSN Code
+* GST Rate
+* Unit of Measure
+* Opening Stock
+* Reorder Level
+
+### Requirements
+
+System should automatically:
+
+* Calculate stock valuation
+* Monitor low stock
+* Suggest replenishment
+
+---
+
+## Module 6: Inventory Management
+
+### Features
+
+* Stock Inward
+* Stock Outward
+* Goods Receipt
+* Stock Ledger
+* Stock Reports
+
+### Reports
+
+* Current Stock
+* Item Movement
+* Dead Stock
+* Fast Moving Stock
+* Reorder Report
+
+---
+
+## Module 7: Purchase Management
+
+### Features
+
+* Purchase Order
+* GRN
+* Purchase Invoice
+* Purchase Return
+* Supplier Outstanding
+* Purchase Register
+
+### Workflow
+
+PO → GRN → Purchase Invoice → Inventory Update → Ledger Posting
+
+---
+
+## Module 8: Sales Management
+
+### Features
+
+* Quotation
+* Sales Order
+* Delivery Challan
+* Tax Invoice
+* E-Invoice
+* Sales Return
+* Credit Note
+* Debit Note
+
+### Additional Features
+
+* PDF Invoice
+* WhatsApp Invoice Sharing
+
+### Workflow
+
+Quotation → Sales Order → Delivery Challan → Invoice → Ledger Posting
+
+---
+
+## Module 9: GST Management
+
+### Features
+
+* CGST
+* SGST
+* IGST
+* GST Sales Register
+* GST Purchase Register
+* GST Summary
+* GSTR-1
+* GSTR-3B
+* HSN Summary
+* GST Audit Reports
+
+### Requirements
+
+Automatic GST Calculation
+
+Validation of:
+
+* GSTIN
+* HSN
+* Tax Rate
+
+---
+
+## Module 10: Accounting
+
+### Features
+
+* Chart of Accounts
+* Ledger Management
+* Cash Book
+* Day Book
+* Trial Balance
+* Profit & Loss
+* Balance Sheet
+* Bank Reconciliation
+
+### Accounting Engine
+
+Every transaction must generate accounting entries automatically.
+
+Examples:
+
+Sales Invoice
+
+Dr Customer
+Cr Sales
+Cr CGST
+Cr SGST
+
+Purchase Invoice
+
+Dr Purchase
+Dr Input GST
+Cr Supplier
+
+---
+
+## Module 11: Banking
+
+### Features
+
+* Bank Accounts
+* Receipt Processing
+* UPI Collection
+* Payment Advice
+* Bank Reconciliation
+
+### Future Scope
+
+Bank statement import
+
+---
+
+## Module 12: Document Management
+
+### Features
+
+* Purchase Bill Scanning
+* OCR Extraction
+* PDF Storage
+
+### OCR Workflow
+
+User uploads:
+
+* PDF
+* JPG
+* PNG
+
+System extracts:
+
+* Supplier Name
+* Invoice Number
+* Date
+* GSTIN
+* Items
+* Quantity
+* Rate
+* Tax
+
+User validates extracted data before saving.
+
+---
+
+## Module 13: AI Engine
+
+### Feature 1: Invoice OCR
+
+Automatic extraction from invoices.
+
+### Feature 2: Inventory Forecasting
+
+Forecast stock requirements using:
+
+* Historical sales
+* Seasonal demand
+
+### Feature 3: Smart Purchase Suggestions
+
+Recommend:
+
+* Reorder quantity
+* Purchase timing
+
+### Feature 4: Natural Language Reports
+
+Examples:
+
+Show sales for April
+
+Top customers this year
+
+Items below reorder level
+
+Outstanding customers above ₹50000
+
+---
+
+## Module 14: Reports
+
+### Sales Reports
+
+* Sales Register
+* Customer-wise Sales
+* Item-wise Sales
+
+### Purchase Reports
+
+* Purchase Register
+* Supplier-wise Purchases
+
+### Inventory Reports
+
+* Current Stock
+* Stock Ledger
+* Reorder Report
+
+### Financial Reports
+
+* Trial Balance
+* Profit & Loss
+* Balance Sheet
+* Outstanding Reports
+
+### GST Reports
+
+* GSTR-1
+* GSTR-3B
+* HSN Summary
+
+### Export Formats
+
+* Excel
+* PDF
+
+---
+
+# Database Design Principles
+
+Use normalized MSSQL schema.
+
+Key tables:
+
+Users
+Roles
+Customers
+CustomerAddresses
+Suppliers
+Items
+PurchaseOrders
+PurchaseInvoices
+PurchaseItems
+SalesOrders
+SalesInvoices
+SalesItems
+StockTransactions
+Ledgers
+LedgerEntries
+BankTransactions
+GSTTransactions
+Documents
+OCRResults
+
+Every table must include:
+
+CreatedDate
+CreatedBy
+ModifiedDate
+ModifiedBy
+IsDeleted
+
+---
+
+# User Interface Design
+
+Use modern dashboard layout.
+
+Navigation:
+
+Dashboard
+
+Masters
+
+* Customers
+* Suppliers
+* Items
+
+Purchases
+
+Sales
+
+Inventory
+
+Accounts
+
+GST
+
+Reports
+
+Documents
+
+Settings
+
+Design goals:
+
+* Fast keyboard navigation
+* Tally-like data entry speed
+* Search everywhere
+* Minimal mouse usage
+
+---
+
+# Non-Functional Requirements
+
+* Works offline
+* MSSQL support
+* Daily backups
+* Fast startup
+* Support 100,000+ invoices
+* Support 1,000,000+ inventory transactions
+* Crash recovery
+* Transaction rollback support
+
+---
+
+# Phase Plan
+
+Phase 1
+
+Masters
+Inventory
+Purchases
+Sales
+GST
+Accounting
+Reports
+
+Phase 2
+
+OCR
+Document Management
+AI Reporting
+
+Phase 3
+
+Forecasting
+Smart Purchasing
+Advanced Analytics
+
+Phase 4
+
+Multi-user
+Remote Access
+Mobile Companion App
+
+---
+
+# Coding Standards
+
+* SOLID Principles
+* Repository Pattern
+* Service Layer Pattern
+* Dependency Injection
+* Unit Testing
+* Logging
+* Exception Handling
+* Database Migration Scripts
+
+Never write business logic inside UI forms.
+
+All business logic must reside in service classes.
