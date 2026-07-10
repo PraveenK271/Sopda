@@ -12,6 +12,7 @@ from ui.gst_reports import GstReportsScreen
 from ui.gst_returns import GstReturnsScreen
 from ui.item_master import ItemMasterScreen
 from ui.ledger_view import LedgerViewScreen
+from ui.ocr_purchase import DocumentHistoryScreen, OCRPurchaseScreen
 from ui.outstanding import OutstandingScreen
 from ui.profit_and_loss import ProfitAndLossScreen
 from ui.purchase import PurchaseScreen
@@ -40,6 +41,8 @@ class MainWindow(QMainWindow):
         self.banking_screen = BankingScreen()
         self.gst_reports_screen = GstReportsScreen()
         self.gst_returns_screen = GstReturnsScreen()
+        self.ocr_purchase_screen = OCRPurchaseScreen()
+        self.document_history_screen = DocumentHistoryScreen()
 
         accounts_tabs = QTabWidget()
         accounts_tabs.addTab(self.day_book_screen, "Day Book")
@@ -53,6 +56,10 @@ class MainWindow(QMainWindow):
         gst_tabs.addTab(self.gst_reports_screen, "Registers/HSN")
         gst_tabs.addTab(self.gst_returns_screen, "Returns")
 
+        documents_tabs = QTabWidget()
+        documents_tabs.addTab(self.ocr_purchase_screen, "Scan Purchase Bill")
+        documents_tabs.addTab(self.document_history_screen, "Document History")
+
         tabs = QTabWidget()
         tabs.addTab(self.item_master_screen, "Items")
         tabs.addTab(self.billing_screen, "Billing")
@@ -62,6 +69,7 @@ class MainWindow(QMainWindow):
         tabs.addTab(accounts_tabs, "Accounts")
         tabs.addTab(self.banking_screen, "Banking")
         tabs.addTab(gst_tabs, "GST")
+        tabs.addTab(documents_tabs, "Documents")
         tabs.currentChanged.connect(self.on_tab_changed)
         self.setCentralWidget(tabs)
 
@@ -75,6 +83,8 @@ class MainWindow(QMainWindow):
         self.banking_screen.refresh_all()
         self.gst_reports_screen.refresh()
         self.gst_returns_screen.refresh()
+        self.ocr_purchase_screen.refresh_lookups()
+        self.document_history_screen.refresh()
 
 
 def main():

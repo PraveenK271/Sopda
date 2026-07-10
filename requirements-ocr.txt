@@ -1,0 +1,17 @@
+# Gemini ERP — OCR dependencies (SEPARATE Python 3.13 venv: venv_ocr)
+#
+# PaddlePaddle publishes no wheels for Python 3.14 (the main app's runtime),
+# so OCR runs in its own 3.13 venv. The main app (3.14) invokes it as a
+# subprocess; services/ocr_service.py is the only bridge to this venv.
+#
+# Setup (needs Python 3.13 installed):
+#   py -3.13 -m venv venv_ocr
+#   venv_ocr\Scripts\activate
+#   pip install -r requirements-ocr.txt
+#
+# pdf2image also needs poppler on Windows — see README.md.
+
+paddleocr==3.7.0       # OCR engine
+paddlepaddle==3.3.1    # PaddleOCR backend (Python <=3.13 only)
+pdf2image==1.17.0      # PDF page -> image; requires poppler on Windows
+Pillow==12.3.0         # image preprocessing (greyscale/contrast/upscale)

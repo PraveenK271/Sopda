@@ -368,7 +368,12 @@ class PurchaseScreen(QWidget):
             return
 
         QMessageBox.information(self, "Saved", f"Purchase invoice {invoice.invoice_no} saved.")
+        self._after_save(invoice)
         self.lines = []
         self.invoice_no_input.clear()
         self.refresh_lines_table()
         self.refresh_lookups()
+
+    def _after_save(self, invoice):
+        """Hook called after a successful save. Base does nothing; the OCR
+        screen overrides it to link its scanned document to the new invoice."""

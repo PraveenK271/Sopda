@@ -1,0 +1,241 @@
+Phase 3 — OCR Service for Gemini ERP
+
+We are adding OCR-based purchase bill scanning using PaddleOCR. The goal is
+not 100% accuracy — it is to reduce manual typing. The user always sees what
+OCR extracted and confirms/corrects it before anything is saved to the
+database. The OCR service is a time-saver, not an auto-importer.
+
+Read CLAUDE.md before starting. The same rules apply:
+- No business logic in the UI
+- One transaction = all or nothing when saving
+- All OCR logic lives in its own service class
+
+---
+
+## Step 1 — Install dependencies
+
+Add to requirements.txt (do not install globally, use the project venv):
+  paddleocr
+  paddlepaddle
+  pdf2image
+  Pillow
+
+pdf2image requires poppler on Windows. Add a note in README.md:
+  "OCR requires poppler for Windows. Download from
+  https://github.com/oschwartz10612/poppler-windows and add the bin/
+  folder to your system PATH."
+
+---
+
+## Step 2 — OCRService (most important part)
+
+Create services/ocr_service.py
+
+This service is the ONLY place in the entire codebase that imports or
+talks to PaddleOCR. No UI file, no other service, no report touches
+PaddleOCR directly. This is non-negotiable — it means we can swap the
+engine later (or add a cloud fallback) by changing one file.
+
+The service must:
+
+2a. Define a standard output dictionary that every caller receives,
+    regardless of what engine produced it. Shape:
+    {
+      "supplier_name":   str or None,
+      "invoice_number":  str or None,
+      "invoice_date":    str or None,   # raw string, let user confirm format
+      "supplier_gstin":  str or None,
+      "line_items": [
+        {
+          "description": str or None,
+          "hsn_code":    str or None,
+          "quantity":    float or None,
+          "rate":        float or None,
+          "amount":      float or None,
+          "gst_rate":    float or None,
+        }
+      ],
+      "taxable_amount":  float or None,
+      "cgst":            float or None,
+      "sgst":            float or None,
+      "igst":            float or None,
+      "total_amount":    float or None,
+      "raw_text":        str,           # always populated, full OCR output
+                                        # shown to user as fallback
+      "confidence":      float,         # 0.0 to 1.0, average OCR confidence
+      "warnings":        list[str],     # e.g. "Could not detect invoice number"
+    }
+
+    If a field cannot be extracted, set it to None and add a warning string.
+    Never raise an exception for a missing field — return None for that field
+    and let the user fill it in.
+
+2b. OCRService.__init__(): initialise PaddleOCR once (lang='en', use_angle_cls=True
+    to handle rotated/skewed scans). Store the instance as self._engine.
+    Do not re-initialise on every call — it is slow.
+
+2c. OCRService.extract_from_file(file_path: str) -> dict
+    Entry point for the UI. Accepts PDF, JPG, PNG, JPEG.
+    - If PDF: convert each page to an image using pdf2image.convert_from_path(),
+      run OCR on each page, merge results (most supplier bills are 1-2 pages).
+    - If image: run OCR directly.
+    - Call _run_ocr(image) internally, then _parse_results(raw_output) to
+      build the standard dict.
+    - Wrap everything in try/except. If OCR itself fails, return the standard
+      dict with all fields None, raw_text="", confidence=0.0, and a warning
+      "OCR failed: <error message>". Never crash the UI.
+
+2d. OCRService._run_ocr(image) -> tuple(str, float)
+    Runs PaddleOCR on a PIL image. Returns (full_text, average_confidence).
+    PaddleOCR returns bounding boxes + text + confidence per word — join
+    all text in reading order (top to bottom, left to right) for full_text,
+    and average the confidence scores.
+
+2e. OCRService._parse_results(raw_text: str) -> dict
+    Extracts structured fields from raw_text using regex patterns. This is
+    where Indian bill formats are handled. Patterns to implement:
+
+    GSTIN: r'[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}'
+           (standard 15-char GST format — find all matches, the first one
+           that is NOT our own GSTIN is likely the supplier's)
+
+    Invoice number: look for lines containing keywords: "invoice no", "bill no",
+           "inv no", "invoice #", "bill number" (case-insensitive). Take the
+           value on the same line after the keyword or colon.
+
+    Date: look for lines containing "date", "dt". Extract date-like patterns:
+           dd/mm/yyyy, dd-mm-yyyy, dd.mm.yyyy. Return as raw string — do not
+           parse to a date object here, let the user confirm.
+
+    Supplier name: typically the largest text at the top of the bill, or the
+           first line before the address. Take the first non-empty line of
+           raw_text as a candidate.
+
+    Amounts (taxable, CGST, SGST, IGST, total): look for keyword labels
+           ("taxable", "cgst", "sgst", "igst", "total", "grand total") and
+           extract the numeric value on the same line. Strip ₹, commas,
+           spaces before parsing to float.
+
+    Line items: this is the hardest part and will not be perfect for all
+           bill formats. Attempt to find rows that have 4+ numeric-looking
+           columns (quantity, rate, amount, gst). If confidence is low,
+           populate line_items as an empty list and add a warning
+           "Could not reliably extract line items — please enter manually."
+           Do not guess line items — wrong items would corrupt stock.
+
+    For every field: if the regex finds nothing, return None for that field
+    and add a warning. Never invent a value.
+
+2f. OCRService.preprocess_image(image) -> image
+    Apply basic preprocessing before OCR to improve accuracy on poor scans:
+    - Convert to greyscale
+    - Increase contrast (PIL ImageEnhance.Contrast, factor 1.5)
+    - If image is very small (width < 1000px), upscale 2x
+    Call this inside _run_ocr before passing to PaddleOCR.
+
+---
+
+## Step 3 — Document storage
+
+Create models/document.py — Document table:
+  id, file_name, file_path (stored in a /documents subfolder of the project),
+  upload_date, document_type ('PURCHASE_BILL' for now),
+  linked_purchase_invoice_id (nullable FK to purchase_invoices),
+  ocr_status ('PENDING' | 'DONE' | 'FAILED'),
+  ocr_raw_text (Text, nullable),
+  ocr_confidence (Float, nullable)
+  + audit columns
+
+Create services/document_service.py — DocumentService:
+  - save_document(file_path, document_type, created_by) -> Document
+    Copies the file into the /documents folder with a unique name
+    (timestamp + original filename), creates the Document row.
+    Does NOT run OCR — that is triggered separately.
+  - run_ocr_on_document(document_id) -> dict
+    Calls OCRService.extract_from_file(), updates the Document row with
+    ocr_status, ocr_raw_text, ocr_confidence, returns the standard dict.
+  - link_to_purchase_invoice(document_id, purchase_invoice_id)
+    Sets linked_purchase_invoice_id on the document row.
+  - list_documents(document_type=None) -> list[Document]
+
+---
+
+## Step 4 — UI: Document upload + OCR review screen
+
+Create ui/ocr_purchase.py — OCRPurchaseScreen
+
+This screen has two stages:
+
+Stage 1 — Upload:
+  - A "Browse" button to pick a PDF/JPG/PNG file
+  - A "Scan Bill" button that calls DocumentService.run_ocr_on_document()
+  - Show a loading indicator while OCR runs (it takes a few seconds)
+  - Display the raw_text in a read-only text area as a fallback reference
+    so the user can read the original if a field is wrong
+
+Stage 2 — Review and confirm (shown after OCR completes):
+  - Pre-filled form fields for: supplier (dropdown, pre-selected if name
+    matches an existing supplier, otherwise blank), invoice number, date,
+    GSTIN, taxable amount, CGST, SGST, IGST, total
+  - Show OCR confidence as a simple label: "High confidence", "Medium —
+    please review carefully", "Low — most fields need manual check"
+    (High = above 0.85, Medium = 0.60-0.85, Low = below 0.60)
+  - An editable line items table pre-filled from OCR (or empty if OCR
+    could not extract items — show a warning label in that case)
+  - Show all warnings from the OCR result as yellow warning labels
+    so the user knows exactly what to check
+  - A "Save Purchase Invoice" button that calls the EXISTING
+    PurchaseService.create_purchase_invoice() — the same service the
+    normal purchase screen uses. Do NOT create a separate save path.
+    The OCR screen is just a smarter way to fill in the form.
+  - After saving, call DocumentService.link_to_purchase_invoice() to
+    connect the scanned file to the saved invoice
+
+Important: the user must be able to edit every field before saving.
+OCR output is a suggestion, not a final value. The Save button must be
+disabled until the user has at minimum confirmed supplier, invoice number,
+date, and total amount (these four fields must be non-empty to save).
+
+---
+
+## Step 5 — Add to navigation
+
+Add "Documents" as a top-level tab in main.py containing:
+  - "Scan Purchase Bill" sub-tab (the OCRPurchaseScreen)
+  - "Document History" sub-tab (a simple list of past scanned documents
+    with their linked invoice number and OCR status, from
+    DocumentService.list_documents())
+
+---
+
+## Step 6 — Test it
+
+Write check_ocr_service.py that tests WITHOUT needing real bill images:
+
+- OCRService._parse_results() with a hardcoded raw_text string that looks
+  like a typical Indian bill — assert it extracts GSTIN, invoice number,
+  and total correctly
+- A raw_text with no GSTIN — assert supplier_gstin is None and warnings
+  contains a relevant message
+- A raw_text with a malformed amount ("1,234.56" and "₹ 1234") — assert
+  both parse to the correct float
+- OCRService.extract_from_file() with a non-existent file path — assert it
+  returns the standard dict with confidence=0.0 and a warning, does not
+  raise an exception
+
+For a real end-to-end test: scan one actual supplier bill, run
+extract_from_file() on it, print the result dict, and manually verify the
+fields. Do this with 3-4 different bill formats from real suppliers before
+declaring OCR done. Note which fields consistently fail — those are
+candidates for manual entry by default in the UI.
+
+---
+
+## What deliberately NOT built here (Phase 4 / later)
+
+- Cloud OCR fallback (Google Document AI, AWS Textract) — the service
+  wrapper makes this a future drop-in
+- Auto-matching supplier by GSTIN against the suppliers table — add later
+  once OCR is stable
+- Sales bill scanning — same OCRService can be reused, different UI
+- Bank statement import — explicitly out of scope per project decisions
