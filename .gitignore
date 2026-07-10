@@ -5,3 +5,4 @@ __pycache__/
 *.db
 gemini_erp/output/
 gemini_erp/documents/
+Samples_TestOCR/
