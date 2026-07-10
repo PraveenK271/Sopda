@@ -45,22 +45,33 @@ def _migrate_add_column(table: str, column: str, ddl_type: str) -> None:
     print(f"Migrated: added {table}.{column}")
 
 
-def main():
+def initialize_database() -> None:
+    """Create all tables, run in-place migrations, seed system accounts.
+
+    Idempotent: safe to call on every app start (packaged clean machine or an
+    existing db alike). ``create_all`` skips tables that already exist and
+    ``ensure_system_accounts`` only inserts what is missing, so re-running
+    changes nothing on an established database. No printing — see :func:`main`
+    for the CLI wrapper (a windowed/packaged app may have no stdout).
+    """
     # create_all first so brand-new tables (bank_accounts, receipts, payments)
     # exist, then migrate the new FK column onto the already-existing
     # ledger_accounts table (create_all never alters existing tables).
     Base.metadata.create_all(engine)
     _migrate_add_column("ledger_accounts", "bank_account_id", "INTEGER REFERENCES bank_accounts(id)")
 
-    print(f"Database ready at {DATABASE_PATH}")
-    print("Tables:", ", ".join(Base.metadata.tables.keys()))
-
     session = SessionLocal()
     try:
         ensure_system_accounts(session)
-        print("System ledger accounts ensured")
     finally:
         session.close()
+
+
+def main():
+    initialize_database()
+    print(f"Database ready at {DATABASE_PATH}")
+    print("Tables:", ", ".join(Base.metadata.tables.keys()))
+    print("System ledger accounts ensured")
 
 
 if __name__ == "__main__":

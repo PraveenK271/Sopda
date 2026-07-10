@@ -11,15 +11,15 @@ import shutil
 from datetime import datetime
 from pathlib import Path
 
-from database import get_session
+from database import get_app_root, get_session
 from models import Document
 from services.ocr_service import OCRService
 
 logger = logging.getLogger(__name__)
 
-# documents/ lives next to the app package (gemini_erp/documents), alongside
-# the SQLite db and gemini_erp/output.
-DOCUMENTS_DIR = Path(__file__).resolve().parents[1] / "documents"
+# documents/ lives next to the SQLite db: gemini_erp/documents/ from source,
+# or beside the .exe when packaged (get_app_root resolves both).
+DOCUMENTS_DIR = Path(get_app_root()) / "documents"
 
 
 class DocumentService:

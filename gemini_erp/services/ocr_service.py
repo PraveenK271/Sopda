@@ -21,17 +21,39 @@ import json
 import logging
 import re
 import subprocess
+import sys
 from pathlib import Path
 
+from database import get_app_root
 from reports.company_info import COMPANY_GSTIN
 
 logger = logging.getLogger(__name__)
 
-# The separate 3.13 OCR venv + runner, located relative to the project root
-# (this file is gemini_erp/services/ocr_service.py -> parents[2] is the repo root).
-_PROJECT_ROOT = Path(__file__).resolve().parents[2]
-_OCR_PYTHON = _PROJECT_ROOT / "venv_ocr" / "Scripts" / "python.exe"
-_OCR_RUNNER = Path(__file__).resolve().parent / "ocr_runner.py"
+
+def _resolve_ocr_paths() -> tuple[Path, Path]:
+    """Locate the 3.13 OCR interpreter and runner script, source or packaged.
+
+    The OCR engine can't be frozen into the exe (PaddlePaddle has no 3.14
+    wheels), so it always runs as a loose script under its own 3.13 venv:
+
+      * source:   <repo>/venv_ocr + gemini_erp/services/ocr_runner.py (unchanged
+                  dev layout).
+      * packaged: a self-contained ocr_worker/ folder next to the exe, holding
+                  ocr_runner.py and a venv_ocr the user creates once (see
+                  DISTRIBUTION_README). Graceful degradation in extract_from_file
+                  handles the venv not being set up yet.
+    """
+    if getattr(sys, "frozen", False):
+        worker = Path(get_app_root()) / "ocr_worker"
+        return worker / "venv_ocr" / "Scripts" / "python.exe", worker / "ocr_runner.py"
+    project_root = Path(__file__).resolve().parents[2]
+    return (
+        project_root / "venv_ocr" / "Scripts" / "python.exe",
+        Path(__file__).resolve().parent / "ocr_runner.py",
+    )
+
+
+_OCR_PYTHON, _OCR_RUNNER = _resolve_ocr_paths()
 
 _OCR_TIMEOUT_SECONDS = 600  # real bills take ~150s; first run also downloads models
 

@@ -1,9 +1,13 @@
 """Application entry point."""
 
+import logging
+import os
 import sys
 
 from PySide6.QtWidgets import QApplication, QMainWindow, QTabWidget
 
+from create_db import initialize_database
+from database import get_app_root
 from ui.balance_sheet import BalanceSheetScreen
 from ui.banking import BankingScreen
 from ui.billing import BillingScreen
@@ -87,11 +91,47 @@ class MainWindow(QMainWindow):
         self.document_history_screen.refresh()
 
 
+def _configure_logging() -> None:
+    """Send logs to a file next to the exe/package.
+
+    The app uses ``logging`` throughout but never configured a handler, so
+    messages went nowhere. A packaged windowed app has no console either, so a
+    file log is the only way to diagnose a field issue.
+    """
+    log_dir = os.path.join(get_app_root(), "logs")
+    os.makedirs(log_dir, exist_ok=True)
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        handlers=[logging.FileHandler(os.path.join(log_dir, "gemini_erp.log"), encoding="utf-8")],
+    )
+
+
+def _bootstrap() -> None:
+    """Prepare the data directory and database before any screen loads.
+
+    On a clean machine (packaged first run) there is no db and no documents/
+    folder; the first screen would query missing tables and crash. Both are
+    created here, idempotently, so an existing install is untouched.
+    """
+    os.makedirs(os.path.join(get_app_root(), "documents"), exist_ok=True)
+    initialize_database()
+
+
 def main():
-    app = QApplication(sys.argv)
-    window = MainWindow()
-    window.show()
-    sys.exit(app.exec())
+    _configure_logging()
+    try:
+        _bootstrap()
+        app = QApplication(sys.argv)
+        window = MainWindow()
+        window.show()
+        sys.exit(app.exec())
+    except SystemExit:
+        raise
+    except Exception:
+        # Windowed builds have no console; record the crash so it isn't silent.
+        logging.getLogger(__name__).exception("Fatal error during startup")
+        raise
 
 
 if __name__ == "__main__":

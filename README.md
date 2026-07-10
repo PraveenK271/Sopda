@@ -45,3 +45,39 @@ images. Without it, PDF scanning fails (image files still work).
 2. Extract it (e.g. `C:\poppler`).
 3. Add its `bin\` folder (e.g. `C:\poppler\Library\bin`) to your system PATH.
 4. Open a new terminal and confirm with `pdftoppm -h`.
+
+## Packaging (Windows distribution)
+
+The app ships as a PyInstaller **onedir** build plus an optional Inno Setup
+installer. Nothing user-writable is baked in: on first run the app creates its
+database, `documents\` and `logs\` next to the exe (`get_app_root()` resolves
+this whether run from source or frozen).
+
+### 1. Build the distribution folder
+
+```
+build.bat
+```
+
+Produces `dist\GeminiERP\` — a self-contained folder that runs on a clean
+machine with no Python installed (double-click `GeminiERP.exe`). It also
+assembles `dist\GeminiERP\ocr_worker\` (the 3.13 OCR runner + bundled Poppler);
+the OCR `venv_ocr` is created once on the target machine — see
+`ocr_worker\README.md`. `build.bat` reads Poppler from
+`C:\Program Files\Poppler\poppler-26.02.0\Library\bin` (edit `POPPLER_BIN` at
+the top if yours differs).
+
+### 2. Build the installer (optional)
+
+Install **Inno Setup 6** (https://jrsoftware.org/isdl.php), then:
+
+```
+build_installer.bat
+```
+
+Compiles `installer.iss` into `installer\GeminiERP-Setup-<version>.exe`. It is a
+**per-user** installer (installs to `%LOCALAPPDATA%\Programs\GeminiERP`, no admin
+prompt); the user's database and documents survive an uninstall/reinstall.
+
+`DISTRIBUTION_README.md` is the end-user guide; `test_checklist.md` is for
+testing the build on a clean machine.

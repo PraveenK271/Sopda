@@ -6,3 +6,7 @@ __pycache__/
 gemini_erp/output/
 gemini_erp/documents/
 Samples_TestOCR/
+build/
+dist/
+installer/
+ocr_worker/venv_ocr/

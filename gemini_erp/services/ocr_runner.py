@@ -66,6 +66,18 @@ def _preprocess(image):
     return image.convert("RGB")
 
 
+def _bundled_poppler_path():
+    """Return a poppler bin/ shipped next to this script, or None.
+
+    The packaged distribution places poppler at ocr_worker/poppler/bin so PDF
+    support travels with the app (no system install / PATH entry needed on the
+    target machine). In a dev checkout that folder is absent, so we return None
+    and let pdf2image find poppler on PATH — preserving the original behaviour.
+    """
+    candidate = os.path.join(os.path.dirname(os.path.abspath(__file__)), "poppler", "bin")
+    return candidate if os.path.isdir(candidate) else None
+
+
 def _load_images(file_path: str, warnings: list) -> list:
     """Return a list of PIL images (one per page for PDFs)."""
     from PIL import Image
@@ -75,6 +87,9 @@ def _load_images(file_path: str, warnings: list) -> list:
         try:
             from pdf2image import convert_from_path
 
+            poppler_path = _bundled_poppler_path()
+            if poppler_path:
+                return list(convert_from_path(file_path, poppler_path=poppler_path))
             return list(convert_from_path(file_path))
         except Exception as exc:  # poppler missing is the common cause
             warnings.append(
