@@ -132,6 +132,10 @@ class PurchaseScreen(QWidget):
         self.purchase_service = purchase_service or PurchaseService()
 
         self.lines: list[dict] = []
+        # None = entry row adds a new line; an index = editing that grid line.
+        self._editing_line_index: int | None = None
+        # None = creating a new purchase; an id = editing that saved invoice.
+        self._editing_invoice_id: int | None = None
 
         self._build_ui()
         self.refresh_lookups()
@@ -175,8 +179,11 @@ class PurchaseScreen(QWidget):
         self.new_item_button.clicked.connect(self.on_new_item)
         self.qty_input = QLineEdit()
         self.rate_input = QLineEdit()
+        # add_line_button doubles as "Update Line" while editing a line.
         self.add_line_button = QPushButton("Add Line")
         self.add_line_button.clicked.connect(self.on_add_line)
+        self.edit_line_button = QPushButton("Edit Line")
+        self.edit_line_button.clicked.connect(self.on_edit_line)
 
         line_form = QHBoxLayout()
         line_form.addWidget(QLabel("Item"))
@@ -187,11 +194,15 @@ class PurchaseScreen(QWidget):
         line_form.addWidget(QLabel("Rate"))
         line_form.addWidget(self.rate_input)
         line_form.addWidget(self.add_line_button)
+        line_form.addWidget(self.edit_line_button)
 
         self.lines_table = QTableWidget()
         self.lines_table.setColumnCount(len(self.LINE_COLUMNS))
         self.lines_table.setHorizontalHeaderLabels(self.LINE_COLUMNS)
         self.lines_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.lines_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.lines_table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
+        self.lines_table.doubleClicked.connect(self.on_edit_line)
 
         self.taxable_label = QLabel("Taxable: 0.00")
         self.cgst_label = QLabel("CGST: 0.00")
@@ -290,17 +301,49 @@ class PurchaseScreen(QWidget):
             QMessageBox.warning(self, "Invalid input", "Quantity must be greater than zero.")
             return
 
-        self.lines.append({
+        line = {
             "item_id": item_data["id"],
             "code": item_data["code"],
             "name": item_data["name"],
             "gst_rate": item_data["gst_rate"],
             "quantity": quantity,
             "rate": rate,
-        })
+        }
+        if self._editing_line_index is None:
+            self.lines.append(line)
+        else:
+            self.lines[self._editing_line_index] = line
+        self._reset_line_entry()
+        self.refresh_lines_table()
+
+    def on_edit_line(self):
+        """Load the selected grid line back into the entry row for editing.
+
+        In-memory only — nothing is written until Save/Update Purchase.
+        """
+        row = self.lines_table.currentRow()
+        if row < 0 or row >= len(self.lines):
+            QMessageBox.warning(self, "No selection", "Select a line in the table first.")
+            return
+
+        line = self.lines[row]
+        for index in range(self.item_combo.count()):
+            data = self.item_combo.itemData(index)
+            if data and data["id"] == line["item_id"]:
+                self.item_combo.setCurrentIndex(index)
+                break
+        self.qty_input.setText(str(line["quantity"]))
+        self.rate_input.setText(str(line["rate"]))
+
+        self._editing_line_index = row
+        self.add_line_button.setText("Update Line")
+
+    def _reset_line_entry(self):
+        """Clear the entry row and leave line-edit mode."""
+        self._editing_line_index = None
         self.qty_input.clear()
         self.rate_input.clear()
-        self.refresh_lines_table()
+        self.add_line_button.setText("Add Line")
 
     def refresh_lines_table(self):
         supplier_data = self.supplier_combo.currentData()
@@ -351,29 +394,93 @@ class PurchaseScreen(QWidget):
             return
 
         invoice_date = self.date_input.date().toPython()
+        line_payload = [
+            {"item_id": line["item_id"], "quantity": line["quantity"], "rate": line["rate"]}
+            for line in self.lines
+        ]
+        editing = self._editing_invoice_id is not None
 
         try:
-            invoice = self.purchase_service.create_purchase_invoice(
-                invoice_no=invoice_no,
-                invoice_date=invoice_date,
-                supplier_id=supplier_data["id"],
-                lines=[
-                    {"item_id": line["item_id"], "quantity": line["quantity"], "rate": line["rate"]}
-                    for line in self.lines
-                ],
-            )
+            if editing:
+                invoice = self.purchase_service.update_purchase_invoice(
+                    self._editing_invoice_id,
+                    invoice_no=invoice_no,
+                    invoice_date=invoice_date,
+                    supplier_id=supplier_data["id"],
+                    lines=line_payload,
+                )
+            else:
+                invoice = self.purchase_service.create_purchase_invoice(
+                    invoice_no=invoice_no,
+                    invoice_date=invoice_date,
+                    supplier_id=supplier_data["id"],
+                    lines=line_payload,
+                )
         except Exception as exc:
-            logger.exception("Failed to save purchase invoice")
-            QMessageBox.critical(self, "Error", f"Could not save purchase invoice:\n{exc}")
+            action = "update" if editing else "save"
+            logger.exception("Failed to %s purchase invoice", action)
+            QMessageBox.critical(self, "Error", f"Could not {action} purchase invoice:\n{exc}")
             return
 
-        QMessageBox.information(self, "Saved", f"Purchase invoice {invoice.invoice_no} saved.")
-        self._after_save(invoice)
+        verb = "updated" if editing else "saved"
+        QMessageBox.information(self, verb.capitalize(), f"Purchase invoice {invoice.invoice_no} {verb}.")
+        if not editing:
+            # OCR document-linking only applies to a freshly created invoice.
+            self._after_save(invoice)
+        self._exit_invoice_edit_mode()
         self.lines = []
+        self._reset_line_entry()
         self.invoice_no_input.clear()
         self.refresh_lines_table()
         self.refresh_lookups()
 
+    def load_invoice_for_edit(self, invoice_id: int) -> None:
+        """Load a saved purchase invoice into this screen for editing.
+
+        Called from the Purchase Log. Prefills the header + lines and switches
+        the screen into 'update' mode; saving then reverses the original stock
+        and journal entries and re-applies the edited ones (PurchaseService).
+        """
+        try:
+            details = self.purchase_service.get_purchase_invoice_details(invoice_id)
+        except Exception as exc:
+            logger.exception("Failed to load purchase invoice %s for edit", invoice_id)
+            QMessageBox.critical(self, "Error", f"Could not open invoice:\n{exc}")
+            return
+
+        self.refresh_lookups()
+        self.invoice_no_input.setText(details["invoice_no"])
+        d = details["date"]
+        self.date_input.setDate(QDate(d.year, d.month, d.day))
+
+        # Select the invoice's supplier in the combo (match by id).
+        for index in range(self.supplier_combo.count()):
+            data = self.supplier_combo.itemData(index)
+            if data and data["id"] == details["supplier_id"]:
+                self.supplier_combo.setCurrentIndex(index)
+                break
+
+        self.lines = [
+            {
+                "item_id": line["item_id"],
+                "code": line["item_code"],
+                "name": line["item_name"],
+                "gst_rate": line["gst_rate"],
+                "quantity": Decimal(str(line["quantity"])),
+                "rate": Decimal(str(line["rate"])),
+            }
+            for line in details["lines"]
+        ]
+
+        self._editing_invoice_id = invoice_id
+        self._reset_line_entry()
+        self.save_button.setText("Update Purchase")
+        self.refresh_lines_table()
+
+    def _exit_invoice_edit_mode(self) -> None:
+        self._editing_invoice_id = None
+        self.save_button.setText("Save Purchase")
+
     def _after_save(self, invoice):
-        """Hook called after a successful save. Base does nothing; the OCR
+        """Hook called after a successful create. Base does nothing; the OCR
         screen overrides it to link its scanned document to the new invoice."""

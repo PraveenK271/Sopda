@@ -599,3 +599,26 @@ Trial Balance balances to the paisa, P&L / Balance Sheet / Outstanding work,
 receipts/payments record against party balances and reconcile against manually
 entered bank statement lines, and the GST register/HSN/GSTR-1/GSTR-3B numbers
 are available (with Excel export). Phase 2 (per `ROADMAP.md`) is complete.
+
+---
+
+## Post-Phase-3 enhancements (edit features) — 2026-07-10
+
+Found during testing; see `CHECKLIST_ENHANCEMENTS.md` for the full checklist.
+
+- **Edit item master** — `ItemService.update_item()` (code stays unique,
+  stock stays derived) + edit mode in `ui/item_master.py`. Test:
+  `check_item_edit.py` PASS.
+- **Edit a saved purchase invoice** — `PurchaseService.update_purchase_invoice()`
+  reverses the original IN stock + journal entry (soft-delete) and re-applies
+  the edited ones in **one transaction**; shared `_apply_lines_and_accounting`
+  helper is reused by create + update. Wired from the Purchase Log
+  (`edit_requested` signal → `main.py` → `PurchaseScreen.load_invoice_for_edit`).
+  Test: `check_purchase_edit.py` PASS (net stock, single active txn/journal/line,
+  trial balance still balances).
+- **Edit a billing line before saving** — in-memory replace in `ui/billing.py`
+  (and the same on the Purchase grid, needed by the invoice edit). Test:
+  `check_edit_ui.py` (offscreen Qt) PASS.
+
+Regression: `check_milestone11` (purchase accounting) + `check_milestone18`
+(GST registers) still PASS after refactoring `create_purchase_invoice`.

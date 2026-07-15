@@ -5,6 +5,8 @@ __pycache__/
 *.db
 gemini_erp/output/
 gemini_erp/documents/
+gemini_erp/logs/
+logs/
 Samples_TestOCR/
 build/
 dist/

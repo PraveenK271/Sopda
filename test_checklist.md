@@ -30,6 +30,19 @@ fails, note it and attach `GeminiERP\logs\gemini_erp.log`.
 - [ ] GST register shows correct invoice data
 - [ ] PDF invoice saves to disk and opens correctly
 
+## Edit features
+
+- [ ] **Items:** select an item → **Edit Selected** (or double-click) → change
+      name/GST/unit → **Update Item** → the row reflects the change; try a
+      duplicate code and confirm it's rejected
+- [ ] **Billing (before saving):** add 2 lines → select one → **Edit Line** →
+      change qty/rate → **Update Line** → the line is replaced (not duplicated)
+      and totals update; then Save the invoice
+- [ ] **Purchase Log:** select a saved purchase → **Edit Selected Invoice** →
+      it opens in the Purchases tab in **Update Purchase** mode → change a qty →
+      **Update Purchase** → confirm the item's **stock changed by the net
+      difference** (not double-counted) and the Purchase Log total updated
+
 ## Edge cases
 
 - [ ] Try to sell **more than available stock** — the app handles it gracefully

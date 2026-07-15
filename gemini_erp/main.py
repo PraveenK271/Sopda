@@ -75,7 +75,16 @@ class MainWindow(QMainWindow):
         tabs.addTab(gst_tabs, "GST")
         tabs.addTab(documents_tabs, "Documents")
         tabs.currentChanged.connect(self.on_tab_changed)
+        self.tabs = tabs
         self.setCentralWidget(tabs)
+
+        # Editing a saved purchase invoice: load it into the Purchase screen and
+        # jump to that tab (the screen then updates it via PurchaseService).
+        self.purchase_log_screen.edit_requested.connect(self.on_edit_purchase_invoice)
+
+    def on_edit_purchase_invoice(self, invoice_id: int):
+        self.purchase_screen.load_invoice_for_edit(invoice_id)
+        self.tabs.setCurrentWidget(self.purchase_screen)
 
     def on_tab_changed(self):
         self.item_master_screen.refresh_items()

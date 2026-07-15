@@ -49,6 +49,8 @@ class BillingScreen(QWidget):
         self.sales_service = sales_service or SalesService()
 
         self.lines: list[dict] = []
+        # None = the entry row adds a new line; an index = editing that line.
+        self._editing_line_index: int | None = None
         self.last_invoice_id: int | None = None
         self.last_invoice_no: str | None = None
 
@@ -92,8 +94,11 @@ class BillingScreen(QWidget):
         self.item_combo = QComboBox()
         self.qty_input = QLineEdit()
         self.rate_input = QLineEdit()
+        # add_line_button doubles as "Update Line" while editing a line.
         self.add_line_button = QPushButton("Add Line")
         self.add_line_button.clicked.connect(self.on_add_line)
+        self.edit_line_button = QPushButton("Edit Line")
+        self.edit_line_button.clicked.connect(self.on_edit_line)
 
         line_form = QHBoxLayout()
         line_form.addWidget(QLabel("Item"))
@@ -103,11 +108,15 @@ class BillingScreen(QWidget):
         line_form.addWidget(QLabel("Rate"))
         line_form.addWidget(self.rate_input)
         line_form.addWidget(self.add_line_button)
+        line_form.addWidget(self.edit_line_button)
 
         self.lines_table = QTableWidget()
         self.lines_table.setColumnCount(len(self.LINE_COLUMNS))
         self.lines_table.setHorizontalHeaderLabels(self.LINE_COLUMNS)
         self.lines_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.lines_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.lines_table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
+        self.lines_table.doubleClicked.connect(self.on_edit_line)
 
         self.taxable_label = QLabel("Taxable: 0.00")
         self.cgst_label = QLabel("CGST: 0.00")
@@ -201,17 +210,50 @@ class BillingScreen(QWidget):
             QMessageBox.warning(self, "Invalid input", "Quantity must be greater than zero.")
             return
 
-        self.lines.append({
+        line = {
             "item_id": item_data["id"],
             "code": item_data["code"],
             "name": item_data["name"],
             "gst_rate": item_data["gst_rate"],
             "quantity": quantity,
             "rate": rate,
-        })
+        }
+        if self._editing_line_index is None:
+            self.lines.append(line)
+        else:
+            self.lines[self._editing_line_index] = line
+        self._reset_line_entry()
+        self.refresh_lines_table()
+
+    def on_edit_line(self):
+        """Load the selected grid line back into the entry row for editing.
+
+        In-memory only — this changes a line before the invoice is saved; nothing
+        is written to the database until Save Invoice.
+        """
+        row = self.lines_table.currentRow()
+        if row < 0 or row >= len(self.lines):
+            QMessageBox.warning(self, "No selection", "Select a line in the table first.")
+            return
+
+        line = self.lines[row]
+        for index in range(self.item_combo.count()):
+            data = self.item_combo.itemData(index)
+            if data and data["id"] == line["item_id"]:
+                self.item_combo.setCurrentIndex(index)
+                break
+        self.qty_input.setText(str(line["quantity"]))
+        self.rate_input.setText(str(line["rate"]))
+
+        self._editing_line_index = row
+        self.add_line_button.setText("Update Line")
+
+    def _reset_line_entry(self):
+        """Clear the entry row and leave line-edit mode."""
+        self._editing_line_index = None
         self.qty_input.clear()
         self.rate_input.clear()
-        self.refresh_lines_table()
+        self.add_line_button.setText("Add Line")
 
     def refresh_lines_table(self):
         customer_data = self.customer_combo.currentData()
@@ -283,6 +325,7 @@ class BillingScreen(QWidget):
         self.last_invoice_no = invoice.invoice_no
         self.pdf_button.setEnabled(True)
         self.lines = []
+        self._reset_line_entry()
         self.invoice_no_input.clear()
         self.refresh_lines_table()
         self.refresh_lookups()

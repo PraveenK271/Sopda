@@ -57,6 +57,63 @@ class ItemService:
         finally:
             session.close()
 
+    def update_item(
+        self,
+        item_id: int,
+        code: str,
+        name: str,
+        hsn_code: str | None = None,
+        gst_rate: float = 0,
+        unit: str | None = None,
+        opening_stock: float = 0,
+        reorder_level: float = 0,
+        modified_by: str | None = None,
+    ) -> Item:
+        """Edit an existing item's master fields.
+
+        Stock is still derived from stock_transactions (opening_stock + IN - OUT),
+        so editing opening_stock here changes the current-stock baseline but never
+        touches the movement log — the stock rule (CLAUDE.md) is preserved. The
+        item code must stay unique among non-deleted items, excluding this one.
+        """
+        session = get_session()
+        try:
+            item = session.get(Item, item_id)
+            if item is None or item.is_deleted:
+                raise ValueError(f"Item {item_id} not found")
+
+            clash = (
+                session.query(Item)
+                .filter(
+                    Item.code == code,
+                    Item.id != item_id,
+                    Item.is_deleted.is_(False),
+                )
+                .first()
+            )
+            if clash is not None:
+                raise ValueError(f"Item code '{code}' already exists")
+
+            item.code = code
+            item.name = name
+            item.hsn_code = hsn_code
+            item.gst_rate = gst_rate
+            item.unit = unit
+            item.opening_stock = opening_stock
+            item.reorder_level = reorder_level
+            item.modified_by = modified_by
+
+            session.commit()
+            session.refresh(item)
+            logger.info("Updated item %s (%s)", item.code, item.name)
+            return item
+        except Exception:
+            session.rollback()
+            logger.exception("Failed to update item %s", item_id)
+            raise
+        finally:
+            session.close()
+
     def list_items(self) -> list[dict]:
         session = get_session()
         try:

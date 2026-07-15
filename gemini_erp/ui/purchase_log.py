@@ -4,10 +4,14 @@ UI only collects input and displays results - all data comes from
 PurchaseService. Mirrors ui/sales_log.py.
 """
 
+from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QDialog,
     QFormLayout,
+    QHBoxLayout,
     QLabel,
+    QMessageBox,
+    QPushButton,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -68,6 +72,10 @@ class PurchaseInvoiceDetailDialog(QDialog):
 class PurchaseLogScreen(QWidget):
     COLUMNS = ["Invoice No", "Date", "Supplier", "Taxable", "CGST", "SGST", "IGST", "Total"]
 
+    # Emitted with the invoice id when the user asks to edit a saved invoice;
+    # MainWindow loads it into the Purchase screen and switches to that tab.
+    edit_requested = Signal(int)
+
     def __init__(self, purchase_service: PurchaseService | None = None):
         super().__init__()
         self.purchase_service = purchase_service or PurchaseService()
@@ -77,13 +85,32 @@ class PurchaseLogScreen(QWidget):
         self.table.setColumnCount(len(self.COLUMNS))
         self.table.setHorizontalHeaderLabels(self.COLUMNS)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
         self.table.cellDoubleClicked.connect(self.on_row_double_clicked)
 
+        self.edit_button = QPushButton("Edit Selected Invoice")
+        self.edit_button.clicked.connect(self.on_edit_selected)
+        buttons_layout = QHBoxLayout()
+        buttons_layout.addWidget(self.edit_button)
+        buttons_layout.addStretch(1)
+
+        hint = QLabel("Double-click a row to view details, or select one and click Edit.")
+
         layout = QVBoxLayout()
+        layout.addLayout(buttons_layout)
         layout.addWidget(self.table)
+        layout.addWidget(hint)
         self.setLayout(layout)
 
         self.refresh_invoices()
+
+    def on_edit_selected(self):
+        row = self.table.currentRow()
+        if row < 0 or row >= len(self.invoice_ids):
+            QMessageBox.warning(self, "No selection", "Select an invoice in the table first.")
+            return
+        self.edit_requested.emit(self.invoice_ids[row])
 
     def refresh_invoices(self):
         invoices = self.purchase_service.list_purchase_invoices()
