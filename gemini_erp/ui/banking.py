@@ -7,7 +7,7 @@ entry behind every receipt/payment) lives in BankingService.
 import logging
 from decimal import Decimal, InvalidOperation
 
-from PySide6.QtCore import QDate
+from PySide6.QtCore import QDate, Signal
 from PySide6.QtWidgets import (
     QComboBox,
     QDateEdit,
@@ -33,6 +33,10 @@ logger = logging.getLogger(__name__)
 
 class BankAccountsTab(QWidget):
     COLUMNS = ["ID", "Name", "Bank", "Account No", "IFSC", "Opening Balance"]
+
+    # Emitted after the bank-account list changes so sibling tabs (Receipts /
+    # Payments / Reconciliation) can refresh their bank-account dropdowns.
+    accounts_changed = Signal()
 
     def __init__(self, banking: BankingService):
         super().__init__()
@@ -94,6 +98,9 @@ class BankAccountsTab(QWidget):
         ):
             field.clear()
         self.refresh()
+        # Let the Receipts/Payments/Reconciliation tabs pick up the new account
+        # right away, instead of only when Banking is re-entered.
+        self.accounts_changed.emit()
 
     def refresh(self):
         banks = self.banking.list_bank_accounts()
@@ -527,6 +534,24 @@ class BankingScreen(QTabWidget):
         self.addTab(self.receipts_tab, "Receipts")
         self.addTab(self.payments_tab, "Payments")
         self.addTab(self.reconciliation_tab, "Reconciliation")
+
+        # Adding a bank account refreshes the tabs that pick from it.
+        self.bank_accounts_tab.accounts_changed.connect(self._on_accounts_changed)
+        # Also refresh a sub-tab's lookups whenever the user switches to it, so
+        # its bank/party dropdowns are never stale within a Banking session.
+        self.currentChanged.connect(self._on_sub_tab_changed)
+
+    def _on_accounts_changed(self):
+        self.receipts_tab.refresh_lookups()
+        self.payments_tab.refresh_lookups()
+        self.reconciliation_tab.refresh_lookups()
+
+    def _on_sub_tab_changed(self, index: int):
+        widget = self.widget(index)
+        if hasattr(widget, "refresh_lookups"):
+            widget.refresh_lookups()
+        elif hasattr(widget, "refresh"):
+            widget.refresh()
 
     def refresh_all(self):
         self.bank_accounts_tab.refresh()

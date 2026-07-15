@@ -6,6 +6,7 @@ layer has already saved - it does not calculate anything.
 """
 
 import logging
+from xml.sax.saxutils import escape
 
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_CENTER, TA_RIGHT
@@ -51,6 +52,11 @@ def generate_invoice_pdf(invoice_id: int, output_path: str) -> str:
             "InvoiceTitle", parent=styles["Heading3"], alignment=TA_CENTER
         )
         right = ParagraphStyle("Right", parent=styles["Normal"], alignment=TA_RIGHT)
+        # Wrapping style for the text columns (Item Code / Name): a plain string
+        # in a ReportLab cell does NOT wrap and overflows into the next column,
+        # so long item names ran into the HSN column. A Paragraph wraps within
+        # the cell width and grows the row height instead.
+        cell = ParagraphStyle("Cell", parent=styles["Normal"], fontSize=8, leading=9)
 
         elements = []
 
@@ -94,8 +100,10 @@ def generate_invoice_pdf(invoice_id: int, output_path: str) -> str:
             rows.append(
                 [
                     str(idx),
-                    item.code,
-                    item.name,
+                    # Wrap the free-text columns so long values flow onto extra
+                    # lines within the cell instead of overlapping the next one.
+                    Paragraph(escape(item.code), cell),
+                    Paragraph(escape(item.name), cell),
                     item.hsn_code or "-",
                     f"{line.quantity:.2f}",
                     item.unit or "-",
