@@ -281,33 +281,35 @@ Decision 5 LOCKED: **read-first PWA, FastAPI + JWT, backend-first.** Split into
 sub-milestones so each is testable on its own. The API is the only thing that
 touches the DB; it also becomes the future secure remote-access layer.
 
-### M29a — FastAPI read API (backend first)
-- [ ] Deps in a NEW `requirements-api.txt` (keep the desktop build lean):
-      `fastapi`, `uvicorn[standard]`, a JWT lib (`PyJWT`), `httpx` (tests).
-      Verify Python 3.14 compatibility at install (as done for pyodbc/passlib).
-- [ ] New `api/` package reusing the existing services (NO logic duplication):
-      `api/main.py` (app + CORS for the PWA origin), `api/config.py`
-      (`GEMINI_JWT_SECRET` + token TTL from env), `api/auth.py` (login endpoint,
-      JWT create/verify, `get_current_user` + `require_permission(module_key)`
-      dependencies), `api/routers/` (dashboard, outstanding, stock, invoices,
-      gst). Session-per-request; endpoints call the dict-returning service
-      methods.
-- [ ] Auth: `POST /api/auth/login` -> `AuthService.authenticate` -> JWT
-      (`sub`=user id, role, username, exp). Same generic error as the desktop;
-      simple login rate-limit mirroring the 5-attempt/30s lockout. RBAC enforced
-      per endpoint via `AuthService.has_permission` (403 otherwise).
-- [ ] Read endpoints mapped to existing services + their permission module:
-      `GET /api/me`; `GET /api/dashboard` (today's sales, total receivable/
-      payable, low-stock count); `GET /api/outstanding/customers|suppliers`
-      (module `accounts`); `GET /api/stock` + reorder alerts (module `items`);
-      `GET /api/invoices/recent` (module `sales_log`); `GET /api/gst/gstr3b`
-      (module `gst`).
-- [ ] **Test it:** `check_milestone29.py` (FastAPI `TestClient`/httpx, headless):
-      login success/failure (401, same generic message), 401 without a token,
-      RBAC (a Sales User token gets 200 on `/stock` + `/invoices/recent` but 403
-      on `/outstanding` + `/gst/gstr3b`), and endpoint numbers MATCH the desktop
-      service output for the same fixtures. Document `uvicorn api.main:app` +
-      `GEMINI_JWT_SECRET` in README.
+### M29a — FastAPI read API (backend first)  ✅ DONE (2026-07-30)
+- [x] Deps in a NEW `requirements-api.txt` (fastapi 0.141.1, uvicorn[standard]
+      0.52.0, PyJWT 2.13.0, httpx 0.28.1) — desktop build stays lean. All
+      install clean on the Python 3.14 venv (cp314 wheels for pydantic-core /
+      httptools / watchfiles / websockets).
+- [x] New `gemini_erp/api/` package reusing the existing services (NO logic
+      duplication): `main.py` (app + CORS + `/api/health`), `config.py`
+      (`GEMINI_JWT_SECRET`/`GEMINI_JWT_TTL_MINUTES`/`GEMINI_API_CORS_ORIGINS`
+      from env), `auth.py` (login, JWT create/verify, `get_current_user` +
+      `require_permission(module_key)`), `routers/` (dashboard, outstanding,
+      stock, invoices, gst). Session-per-request; endpoints return the
+      dict-returning service output.
+- [x] Auth: `POST /api/auth/login` -> `AuthService.authenticate` -> JWT
+      (`sub`=id, username, role, exp). Same generic "Invalid username or
+      password"; in-memory login rate-limit (5 tries/30s -> 429) mirroring the
+      desktop. `get_current_user` re-loads the user each request (deactivation /
+      role change take effect at once). RBAC per endpoint via `has_permission`
+      (403 otherwise).
+- [x] Read endpoints, each gated by its module: `GET /api/me`; `/api/dashboard`
+      (per-permission: today's sales, receivable/payable, low-stock — disallowed
+      metrics are null, not leaked); `/api/outstanding/customers|suppliers`
+      (`accounts`); `/api/stock` + `/api/stock/reorder` (`items`);
+      `/api/invoices/recent` (`sales_log`); `/api/gst/gstr3b` (`gst`).
+- [x] **Tested — `check_milestone29.py` (FastAPI TestClient) PASS on SQL Server
+      AND SQLite:** login failure/unknown -> 401 (generic), no-token -> 401,
+      /api/me lists the role's modules, RBAC (Sales User 200 on stock/invoices,
+      403 on outstanding/gst, dashboard hides receivables), rate-limit 429, and
+      endpoint numbers MATCH the desktop services. Live `uvicorn api.main:app`
+      run verified (health 200). README documents the run command + env vars.
 
 ### M29b — PWA client
 - [ ] Installable PWA (manifest + service worker, offline app shell): login

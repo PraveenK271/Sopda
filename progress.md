@@ -712,4 +712,26 @@ Regression: `check_milestone11` (purchase accounting) + `check_milestone18`
   sales → no lost updates + N OUT rows; (C) oversell commits + warns (stock < 0).
 - Packaging (PyInstaller onedir + Inno installer) was already built earlier; no
   new packaging code this milestone.
-- Remaining Phase 4 item: **M29 (mobile companion — deferred; needs Decision 5).**
+- Remaining Phase 4 item: **M29 (mobile companion).** Approach LOCKED: read-first
+  PWA over FastAPI, JWT auth, backend-first (see CHECKLIST_PHASE4 Decision 5).
+
+### Milestone 29a — FastAPI read API — DONE 2026-07-30
+- New `requirements-api.txt` (fastapi/uvicorn/PyJWT/httpx) — SEPARATE from the
+  desktop reqs; all install clean on the 3.14 venv. New `gemini_erp/api/` package
+  reusing the existing services (no logic duplication):
+  - `config.py` — `GEMINI_JWT_SECRET` (dev fallback + warning), TTL, CORS from env.
+  - `auth.py` — `POST /api/auth/login` → JWT (via `AuthService.authenticate`);
+    `get_current_user` (HTTPBearer, re-loads the live user each request),
+    `require_permission(module_key)` dep, `GET /api/me`, in-memory 5/30s login
+    rate-limit → 429. Same generic error as desktop.
+  - `routers/` — dashboard (per-permission metrics; disallowed = null),
+    outstanding (accounts), stock + /reorder (items), invoices/recent
+    (sales_log), gst/gstr3b (gst). `main.py` = app + CORS + `/api/health`.
+- Run: `cd gemini_erp && uvicorn api.main:app` (reads the same GEMINI_DB_URL;
+  set GEMINI_JWT_SECRET). Swagger at `/docs`. README "Mobile companion API".
+- `check_milestone29.py` (FastAPI TestClient) PASS both backends: login 401
+  (generic) / no-token 401 / RBAC 200-403 per role / dashboard hides receivables
+  from a Sales User / rate-limit 429 / numbers match the desktop services. Live
+  uvicorn run also verified (health 200).
+- **Next: M29b** (installable PWA over this API, HTTPS/VPN) — front-end work;
+  optional M29c (approve-a-scan write) after.

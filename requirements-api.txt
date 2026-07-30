@@ -1,0 +1,16 @@
+# Gemini ERP — Mobile companion API (Phase 4 M29a). Install into the SAME main
+# venv as requirements.txt:
+#   venv\Scripts\activate
+#   pip install -r requirements-api.txt
+#
+# Kept separate from requirements.txt so the packaged desktop build stays lean
+# (the desktop app does not need FastAPI/uvicorn). The API reuses the existing
+# services/ and SQLAlchemy models — it adds no business logic.
+#
+# Run the API (from the gemini_erp/ folder, with GEMINI_DB_URL + GEMINI_JWT_SECRET set):
+#   uvicorn api.main:app --host 0.0.0.0 --port 8000
+
+fastapi==0.141.1          # web framework (ASGI)
+uvicorn[standard]==0.52.0 # ASGI server
+PyJWT==2.13.0             # JWT access tokens
+httpx==0.28.1             # used by tests (FastAPI TestClient)

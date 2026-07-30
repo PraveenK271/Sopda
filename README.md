@@ -120,6 +120,36 @@ future milestone (M29).
 onedir) and optionally `build_installer.bat` (Inno Setup) — see Packaging below.
 Ship the `.env` and the ODBC-driver install step with the client.
 
+### Mobile companion API (Phase 4 M29a — read-first)
+
+A **FastAPI** service exposes read-only endpoints (dashboard, outstanding, stock
++ reorder, recent invoices, GSTR-3B) for a future PWA (M29b). It reuses the
+existing `services/` + models — no business logic is duplicated — and is the
+ONLY process a phone talks to (SQL Server is never exposed to the phone).
+
+```
+pip install -r requirements-api.txt      # into the SAME venv
+# from the gemini_erp/ folder, with the DB + a real signing key set:
+set GEMINI_JWT_SECRET=<a-long-random-string>     # REQUIRED in production
+uvicorn api.main:app --host 0.0.0.0 --port 8000
+```
+
+- Auth: `POST /api/auth/login` (username/password) returns a JWT; send it as
+  `Authorization: Bearer <token>`. `GET /api/me` shows the role's permitted
+  modules. RBAC is enforced per endpoint using the same role permissions as the
+  desktop (e.g. a Sales User gets `/api/stock` but not `/api/outstanding`).
+- Config (env): `GEMINI_JWT_SECRET` (signing key — a dev fallback is used with a
+  warning if unset), `GEMINI_JWT_TTL_MINUTES` (default 720), `GEMINI_API_CORS_ORIGINS`
+  (comma-separated PWA origins; default `*`). The API reads the same
+  `GEMINI_DB_URL` as the desktop.
+- Interactive docs at `/docs` (Swagger) once running.
+- **Deployment:** run on a LAN box; phones reach it over **VPN**. A PWA needs
+  **HTTPS** (secure context) — terminate TLS at a reverse proxy or use a
+  self-signed/mkcert cert. Never expose the API (or SQL Server) to the open
+  internet without TLS + hardening.
+- Verified by `gemini_erp/check_milestone29.py` (FastAPI TestClient): login,
+  JWT/RBAC, rate-limit, and numbers matching the desktop services.
+
 ## OCR setup (Phase 3 — separate Python 3.13 venv)
 
 PaddlePaddle (PaddleOCR's backend) has no wheels for Python 3.14, so OCR runs
