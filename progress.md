@@ -753,6 +753,27 @@ Regression: `check_milestone11` (purchase accounting) + `check_milestone18`
 - `check_milestone29c.py` (FastAPI TestClient) PASS both backends: list/approve/
   reject persist; Sales User 403 (no `documents`); missing doc 404. Regression
   M22/M23 (OCR/documents) + M29a still PASS.
-- **Phase 4 is functionally complete except M29b (the PWA front-end).** All
-  backend milestones (M24 MSSQL, M25 settings/backup, M26/27 auth+RBAC, M28
-  concurrency, M29a API, M29c write) are done and tested on both backends.
+### Milestone 29b — PWA client — DONE 2026-07-30
+- Installable, framework-free PWA in `gemini_erp/api/static/` (`index.html`,
+  `app.js`, `styles.css`, `manifest.webmanifest`, `sw.js`, `icon-192/512.png`
+  generated via stdlib zlib/struct). Login stores the JWT (localStorage); views:
+  dashboard, outstanding, stock/reorder, recent invoices, GSTR-3B, and
+  approve/reject scanned bills (M29c). Nav shows only views the role permits
+  (from `permitted_modules`); API still enforces RBAC. Mobile-first dark theme.
+  Service worker precaches the app shell, never caches `/api`.
+- Served by the SAME FastAPI app: `StaticFiles` mounted at "/" AFTER the routers
+  (so `/api/*` wins). One origin -> no CORS, one TLS endpoint. `main.py` mount.
+- `check_milestone29b.py` PASS (TestClient + live uvicorn socket): shell/assets
+  served, manifest+PNG icons valid, sw served, API not shadowed (`/api/health`
+  200, `/api/stock` 401). Regression M29a/M29c still PASS.
+- Deploy: open `http://<host>:8000/` on the phone, install to home screen. Needs
+  a secure context to install (localhost dev, else HTTPS via reverse proxy /
+  mkcert; phones over VPN). Visual/interaction test on a phone is MANUAL.
+
+## PHASE 4 COMPLETE (M24–M29) — 2026-07-30
+Every milestone is built and tested on SQL Server AND SQLite: M24 (config-driven
+MSSQL), M25 (company profile/settings/backup), M26/M27 (users/roles/login/RBAC),
+M28 (concurrency: friendly UNIQUE clash + oversell warn), M29a (FastAPI read
+API), M29c (approve-a-scan write), M29b (installable PWA). Remaining = manual
+on-screen checks (desktop login flow; PWA on a phone) + deployment hardening
+(HTTPS/VPN, real GEMINI_JWT_SECRET, change the default admin password).

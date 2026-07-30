@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0f766e" />
+  <title>Gemini ERP</title>
+  <link rel="manifest" href="/manifest.webmanifest" />
+  <link rel="icon" href="/icon-192.png" />
+  <link rel="apple-touch-icon" href="/icon-192.png" />
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <!-- Login view -->
+  <section id="login-view" class="view">
+    <div class="login-card">
+      <h1 class="brand">Gemini&nbsp;ERP</h1>
+      <p class="subtitle">Mobile companion</p>
+      <form id="login-form">
+        <label>Username <input id="login-username" autocomplete="username" required /></label>
+        <label>Password <input id="login-password" type="password" autocomplete="current-password" required /></label>
+        <button type="submit" id="login-btn">Log in</button>
+        <p id="login-error" class="error" role="alert"></p>
+      </form>
+    </div>
+  </section>
+
+  <!-- App view -->
+  <section id="app-view" class="view hidden">
+    <header class="app-header">
+      <div>
+        <strong id="app-title">Gemini ERP</strong>
+        <span id="user-chip" class="chip"></span>
+      </div>
+      <button id="logout-btn" class="link-btn">Logout</button>
+    </header>
+    <div id="must-change" class="banner hidden">
+      You must change your password in the desktop app.
+    </div>
+    <nav id="nav" class="nav"></nav>
+    <main id="content" class="content"><div class="loading">Loading…</div></main>
+  </section>
+
+  <script src="/app.js"></script>
+</body>
+</html>

@@ -146,7 +146,14 @@ uvicorn api.main:app --host 0.0.0.0 --port 8000
   warning if unset), `GEMINI_JWT_TTL_MINUTES` (default 720), `GEMINI_API_CORS_ORIGINS`
   (comma-separated PWA origins; default `*`). The API reads the same
   `GEMINI_DB_URL` as the desktop.
-- Interactive docs at `/docs` (Swagger) once running.
+- **The PWA (M29b) is served by the same server** at the root URL: open
+  `http://<host>:8000/` on the phone and "Add to Home Screen" to install it. It
+  logs in against `/api/auth/login`, shows the read-only screens (dashboard,
+  outstanding, stock, invoices, GSTR-3B), and lets a permitted user approve/
+  reject scanned bills. Because the app and API share an origin there is no CORS
+  to configure. Installing/offline-shell needs a **secure context** — use
+  `localhost` for dev, or HTTPS (reverse proxy / self-signed / mkcert) on the LAN.
+- Interactive API docs at `/docs` (Swagger) once running.
 - **Deployment:** run on a LAN box; phones reach it over **VPN**. A PWA needs
   **HTTPS** (secure context) — terminate TLS at a reverse proxy or use a
   self-signed/mkcert cert. Never expose the API (or SQL Server) to the open

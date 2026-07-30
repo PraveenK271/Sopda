@@ -311,14 +311,28 @@ touches the DB; it also becomes the future secure remote-access layer.
       endpoint numbers MATCH the desktop services. Live `uvicorn api.main:app`
       run verified (health 200). README documents the run command + env vars.
 
-### M29b — PWA client
-- [ ] Installable PWA (manifest + service worker, offline app shell): login
-      (stores the JWT), then read-first screens — dashboard, outstanding,
-      stock/reorder, recent invoices, GSTR-3B — calling the M29a API.
-- [ ] Serve over HTTPS (localhost is a secure context for dev; LAN via
-      self-signed/mkcert or a TLS reverse proxy). Phones reach it over VPN.
-- [ ] **Test it:** load on a phone over the LAN/VPN, log in as each role, confirm
-      only permitted data appears and the numbers match the desktop.
+### M29b — PWA client  ✅ DONE (2026-07-30)
+- [x] Installable PWA in `api/static/` (`index.html`, `app.js`, `styles.css`,
+      `manifest.webmanifest`, `sw.js`, PNG icons): login stores the JWT, then
+      read-first screens — dashboard, outstanding, stock/reorder, recent
+      invoices, GSTR-3B — plus **approve/reject scanned bills** (M29c). Vanilla
+      JS (no framework/build step), mobile-first, dark theme. Nav shows only the
+      views the role permits (reads `permitted_modules` from login); the API
+      still enforces RBAC. Service worker precaches the app shell for offline
+      load and never caches `/api` responses.
+- [x] Served by the SAME FastAPI app at "/" (StaticFiles mounted AFTER the
+      routers, so `/api/*` still wins) — one origin, no CORS, one endpoint to
+      put behind TLS. `localhost` is a secure context for dev; LAN via
+      self-signed/mkcert or a TLS reverse proxy; phones over VPN.
+- [x] **Automated wiring test — `check_milestone29b.py` PASS:** app shell +
+      assets served, manifest valid with icons, icons are real PNGs, service
+      worker served, and the static mount did NOT shadow the API (`/api/health`
+      200, `/api/stock` still 401). Verified over a live `uvicorn` socket too.
+      Visual/interaction test on a phone remains manual (below).
+- [ ] **Manual phone test (do before rollout):** open `http://<host>:8000/` (or
+      the HTTPS URL) on the phone, install to home screen, log in as each role,
+      confirm only permitted tabs/data appear and the numbers match the desktop,
+      and approve a scanned bill.
 
 ### M29c — Approve-a-scanned-bill (the one write)  ✅ DONE (2026-07-30)
 - [x] Manager sign-off model on `documents`: nullable `approval_status`
@@ -344,7 +358,12 @@ touches the DB; it also becomes the future secure remote-access layer.
 
 ---
 
-## Phase 4 is DONE when:
+## Phase 4 is DONE when:  ✅ ACHIEVED (2026-07-30)
+
+All milestones M24–M29 are built and tested on both backends (SQL Server + SQLite
+parity). The only remaining tasks are the **manual on-screen checks** noted under
+M27 (desktop login/RBAC/logout) and M29b (PWA on a phone), plus real deployment
+config (HTTPS/VPN, a real `GEMINI_JWT_SECRET`, changing the default admin).
 
 The system runs on Microsoft SQL Server with several users on different machines
 logging in with their own accounts, each seeing only what their role permits,
