@@ -324,6 +324,10 @@ class BillingScreen(QWidget):
             return
 
         QMessageBox.information(self, "Saved", f"Invoice {invoice.invoice_no} saved.")
+        # Oversell is allowed but flagged — warn after saving, never block.
+        warnings = getattr(invoice, "stock_warnings", [])
+        if warnings:
+            QMessageBox.warning(self, "Stock warning", "\n".join(warnings))
         self.last_invoice_id = invoice.id
         self.last_invoice_no = invoice.invoice_no
         self.pdf_button.setEnabled(True)

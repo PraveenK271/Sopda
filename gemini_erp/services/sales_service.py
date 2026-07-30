@@ -9,7 +9,8 @@ import logging
 from datetime import date as date_type
 from decimal import ROUND_HALF_UP, Decimal
 
-from sqlalchemy import false, true
+from sqlalchemy import case, false, func, true
+from sqlalchemy.exc import IntegrityError
 from database import get_session
 from models import Customer, Item, SalesInvoice, SalesInvoiceItem, StockTransaction
 from services.accounting_service import AccountingService
@@ -54,6 +55,11 @@ class SalesService:
             session.flush()  # assign invoice.id within this transaction
 
             total_taxable = total_cgst = total_sgst = total_igst = Decimal("0")
+            # Track net quantity sold per item so we can warn (not block) if a
+            # line drives stock below zero — the chosen oversell policy is
+            # "allow but warn" (multi-user: two clients can both sell the last
+            # units; we record both and flag the negative stock).
+            items_sold: dict[int, list] = {}
 
             for line in lines:
                 item = session.get(Item, line["item_id"])
@@ -94,6 +100,12 @@ class SalesService:
                 total_sgst += sgst
                 total_igst += igst
 
+                entry = items_sold.get(item.id)
+                if entry is None:
+                    items_sold[item.id] = [item, quantity]
+                else:
+                    entry[1] += quantity
+
             invoice.taxable_amount = total_taxable
             invoice.cgst = total_cgst
             invoice.sgst = total_sgst
@@ -133,14 +145,57 @@ class SalesService:
 
             session.commit()
             session.refresh(invoice)
+            # Non-blocking oversell check on the committed stock. Attached as a
+            # transient attribute (not a DB column) for the UI to surface.
+            invoice.stock_warnings = self._negative_stock_warnings(session, items_sold)
+            for warning in invoice.stock_warnings:
+                logger.warning("Oversell on invoice %s: %s", invoice.invoice_no, warning)
             logger.info("Created invoice %s with %d line(s)", invoice.invoice_no, len(lines))
             return invoice
+        except IntegrityError:
+            # Race-safe manual numbering: the UNIQUE(invoice_no) constraint is the
+            # authority. If two clients save the same number, one commit wins and
+            # the other lands here — surface a clear message, not a raw DB error.
+            session.rollback()
+            logger.warning("Duplicate invoice number '%s' rejected", invoice_no)
+            raise ValueError(
+                f"Invoice number '{invoice_no}' is already used. Please use a different number."
+            )
         except Exception:
             session.rollback()
             logger.exception("Failed to create invoice %s", invoice_no)
             raise
         finally:
             session.close()
+
+    @staticmethod
+    def _negative_stock_warnings(session, items_sold: dict[int, list]) -> list[str]:
+        """Return a warning per item whose stock is below zero after the sale."""
+        warnings = []
+        for item, _qty in items_sold.values():
+            stock = SalesService._current_stock(session, item)
+            if stock < 0:
+                warnings.append(
+                    f"Stock for {item.code} ({item.name}) is now {stock:g} (below zero)."
+                )
+        return warnings
+
+    @staticmethod
+    def _current_stock(session, item) -> float:
+        """current_stock = opening_stock + sum(IN) - sum(OUT), backend-neutral."""
+        in_qty, out_qty = (
+            session.query(
+                func.coalesce(
+                    func.sum(case((StockTransaction.type == "IN", StockTransaction.quantity), else_=0)), 0
+                ),
+                func.coalesce(
+                    func.sum(case((StockTransaction.type == "OUT", StockTransaction.quantity), else_=0)), 0
+                ),
+            )
+            .filter(StockTransaction.item_id == item.id, StockTransaction.is_deleted == false())
+            .one()
+        )
+        return float(item.opening_stock) + float(in_qty) - float(out_qty)
 
     def list_invoices(self) -> list[dict]:
         session = get_session()

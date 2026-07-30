@@ -237,23 +237,36 @@ is **ODBC Driver 17** (not 18); the `.env` URL uses Driver 17 accordingly. The
 
 ---
 
-## Milestone 28 — Remote access & deployment (infra + packaging)
+## Milestone 28 — Remote access & deployment (infra + packaging)  ✅ DONE (2026-07-30)
 
-*Largely infrastructure + a decision (see Decision 4); lighter on new code.*
+*Largely infrastructure + two decisions (below); lighter on new code.*
 
-- [ ] Point multiple client installs at ONE shared SQL Server via
-      `GEMINI_DB_URL` (proven in M24); document the LAN setup in `README.md`.
-- [ ] **Concurrency hardening** (see cross-cutting concerns): add the
-      `UNIQUE(invoice_no)` constraint + race-safe invoice numbering, and decide
-      the oversell policy; add a small concurrent-write test.
-- [ ] **Packaging** (spec Tech stack: PyInstaller + Windows Installer): build a
-      one-file/one-folder EXE and a Windows installer so non-technical users can
-      install the client; bundle the ODBC-driver install step in the docs.
-- [ ] Secure remote access: document VPN-based access to the LAN SQL Server (do
-      NOT expose SQL Server to the internet directly — Decision 4).
-- [ ] **Test it:** two client instances against the same MSSQL server can both
-      bill concurrently without duplicate invoice numbers or stock corruption
-      (scripted two-process test).
+**Decisions locked (via the user):** oversell policy = **allow but warn**;
+invoice numbering = **keep manual entry** (rely on `UNIQUE(invoice_no)` + a
+friendly clash message), NOT auto-generated.
+
+- [x] Multiple clients point at ONE shared SQL Server via each client's `.env`
+      `GEMINI_DB_URL` (proven in M24). LAN setup + per-client ODBC-driver step
+      documented in `README.md` ("Multi-user deployment").
+- [x] **Concurrency hardening:** `UNIQUE(invoice_no)` already existed on
+      `sales_invoices`; `SalesService.create_invoice` now catches the resulting
+      `IntegrityError` and raises a clear "Invoice number '…' is already used"
+      `ValueError` (race-safe manual numbering — the constraint is the authority).
+      Oversell is allowed but flagged: the service computes a negative-stock
+      warning (`invoice.stock_warnings`, a transient attribute) and Billing shows
+      it after saving. Stock stays an append-only log, so concurrent sales don't
+      lose updates. One-transaction rule unchanged; default READ COMMITTED is
+      correct (noted in README).
+- [x] **Packaging** already shipped earlier (PyInstaller onedir `build.bat` +
+      Inno Setup `build_installer.bat`/`installer.iss`); README's new section
+      references it and the ODBC-driver install step for clients.
+- [x] Secure remote access: README documents **VPN-only** access to the LAN SQL
+      Server (never expose SQL Server to the internet — Decision 4).
+- [x] **Tested — `check_milestone28.py` PASS on SQL Server AND SQLite:** two
+      concurrent clients (threads, own sessions) — (A) same invoice_no race →
+      exactly one saved, one clean rejection, one row; (B) N concurrent sales of
+      one item → stock has no lost updates + N OUT rows; (C) oversell still
+      commits and is warned (stock goes negative).
 
 ---
 

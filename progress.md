@@ -691,3 +691,25 @@ Regression: `check_milestone11` (purchase accounting) + `check_milestone18`
   hashed passwords (portable across SQLite/MSSQL).
 - Default admin credential is `admin`/`Admin@1234` on a fresh DB; it is forced
   to change on first login. Change it before any real deployment.
+
+### Milestone 28 — Concurrency hardening & multi-user deployment — DONE 2026-07-30
+- **Decisions (user):** oversell = **allow but warn**; invoice numbering = **keep
+  manual entry** (no auto-generation).
+- `SalesService.create_invoice`: catches `IntegrityError` from the existing
+  `UNIQUE(sales_invoices.invoice_no)` and raises a friendly "Invoice number '…'
+  is already used" `ValueError` — race-safe manual numbering (the constraint is
+  the authority; two clients saving the same number → one wins, one clean
+  rejection). Also computes a non-blocking negative-stock warning after commit
+  and attaches it as a transient `invoice.stock_warnings` (not a DB column);
+  Billing shows it after saving. `purchase_invoices.invoice_no` stays NON-unique
+  (supplier's own number).
+- `README.md` — new "Multi-user deployment (LAN + concurrency)" section:
+  per-client `.env` + ODBC driver, shared-server first-run, concurrency
+  behavior, VPN-only remote access, packaging pointer. Default READ COMMITTED is
+  correct (one sale = one transaction).
+- `check_milestone28.py` (threads, each own session) PASS both backends:
+  (A) duplicate-number race → 1 saved / 1 rejected / 1 row; (B) N concurrent
+  sales → no lost updates + N OUT rows; (C) oversell commits + warns (stock < 0).
+- Packaging (PyInstaller onedir + Inno installer) was already built earlier; no
+  new packaging code this milestone.
+- Remaining Phase 4 item: **M29 (mobile companion — deferred; needs Decision 5).**
