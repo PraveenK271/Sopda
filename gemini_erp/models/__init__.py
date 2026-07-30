@@ -11,10 +11,12 @@ from models.payment import Payment
 from models.purchase_invoice import PurchaseInvoice
 from models.purchase_invoice_item import PurchaseInvoiceItem
 from models.receipt import Receipt
+from models.role import Role
 from models.sales_invoice import SalesInvoice
 from models.sales_invoice_item import SalesInvoiceItem
 from models.stock_transaction import StockTransaction
 from models.supplier import Supplier
+from models.user import User
 
 __all__ = [
     "BankAccount",
@@ -30,8 +32,10 @@ __all__ = [
     "PurchaseInvoice",
     "PurchaseInvoiceItem",
     "Receipt",
+    "Role",
     "SalesInvoice",
     "SalesInvoiceItem",
     "StockTransaction",
     "Supplier",
+    "User",
 ]

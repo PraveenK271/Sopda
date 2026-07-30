@@ -14,3 +14,5 @@ openpyxl==3.1.5        # Excel export
 pyinstaller            # packaging into a Windows distribution (build.bat)
 python-dotenv==1.0.1   # load GEMINI_DB_URL from .env (Phase 4 / MSSQL)
 pyodbc==5.3.0          # SQL Server driver bridge (needs ODBC Driver 17/18 installed)
+passlib==1.7.4         # password hashing wrapper (Phase 4 auth / users)
+bcrypt==4.0.1          # bcrypt backend for passlib — PINNED: passlib 1.7.4 breaks on bcrypt 4.1+

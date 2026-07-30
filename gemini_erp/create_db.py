@@ -20,11 +20,14 @@ from models import (  # noqa: F401
     PurchaseInvoice,
     PurchaseInvoiceItem,
     Receipt,
+    Role,
     SalesInvoice,
     SalesInvoiceItem,
     StockTransaction,
     Supplier,
+    User,
 )
+from services.auth_service import ensure_roles_and_admin
 from services.chart_of_accounts import ensure_system_accounts
 from services.settings_service import ensure_profile
 
@@ -66,6 +69,7 @@ def initialize_database() -> None:
     try:
         ensure_system_accounts(session)
         ensure_profile(session)
+        ensure_roles_and_admin(session)
     finally:
         session.close()
 
@@ -85,6 +89,7 @@ def main():
     print("Tables:", ", ".join(Base.metadata.tables.keys()))
     print("System ledger accounts ensured")
     print("Company profile ensured")
+    print("Roles and default admin ensured")
 
 
 if __name__ == "__main__":
