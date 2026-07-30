@@ -21,6 +21,7 @@ import logging
 from datetime import date as date_type
 from decimal import ROUND_HALF_UP, Decimal
 
+from sqlalchemy import false, true
 from database import get_session
 from models import (
     Customer,
@@ -75,8 +76,8 @@ class GstReportService:
             .filter(
                 invoice_cls.date >= date_from,
                 invoice_cls.date <= date_to,
-                invoice_cls.is_deleted.is_(False),
-                line_cls.is_deleted.is_(False),
+                invoice_cls.is_deleted == false(),
+                line_cls.is_deleted == false(),
             )
             .order_by(invoice_cls.date, invoice_cls.id, line_cls.id)
             .all()
@@ -212,7 +213,7 @@ class GstReportService:
                 .filter(
                     SalesInvoice.date >= date_from,
                     SalesInvoice.date <= date_to,
-                    SalesInvoice.is_deleted.is_(False),
+                    SalesInvoice.is_deleted == false(),
                 )
                 .order_by(SalesInvoice.date, SalesInvoice.id)
                 .all()
@@ -304,7 +305,7 @@ class GstReportService:
             .filter(
                 invoice_cls.date >= date_from,
                 invoice_cls.date <= date_to,
-                invoice_cls.is_deleted.is_(False),
+                invoice_cls.is_deleted == false(),
             )
             .one()
         )

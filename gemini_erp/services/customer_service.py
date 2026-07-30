@@ -2,6 +2,7 @@
 
 import logging
 
+from sqlalchemy import false, true
 from database import get_session
 from models import Customer, LedgerAccount
 
@@ -56,7 +57,7 @@ class CustomerService:
         try:
             customers = (
                 session.query(Customer)
-                .filter(Customer.is_deleted.is_(False))
+                .filter(Customer.is_deleted == false())
                 .order_by(Customer.id)
                 .all()
             )

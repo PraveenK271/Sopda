@@ -5,7 +5,7 @@ Run with: python create_db.py
 
 from sqlalchemy import inspect, text
 
-from database import Base, DATABASE_PATH, SessionLocal, engine
+from database import Base, DATABASE_PATH, DATABASE_URL, SessionLocal, engine
 from models import (  # noqa: F401
     BankAccount,
     BankStatementLine,
@@ -69,7 +69,16 @@ def initialize_database() -> None:
 
 def main():
     initialize_database()
-    print(f"Database ready at {DATABASE_PATH}")
+    backend = "SQL Server" if "mssql" in DATABASE_URL else (
+        "SQLite" if DATABASE_URL.startswith("sqlite") else "Other"
+    )
+    print("Database tables created successfully.")
+    # Show the target so a fresh setup can be confirmed to have hit MSSQL and
+    # not SQLite by mistake. Trim to avoid printing any credentials in full.
+    print(f"Connected to: {DATABASE_URL[:50]}...")
+    print(f"Backend: {backend}")
+    if backend == "SQLite":
+        print(f"SQLite file: {DATABASE_PATH}")
     print("Tables:", ", ".join(Base.metadata.tables.keys()))
     print("System ledger accounts ensured")
 

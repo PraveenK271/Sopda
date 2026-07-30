@@ -23,6 +23,37 @@ python gemini_erp/create_db.py   # creates the SQLite database and tables
 python gemini_erp/main.py        # launches the app
 ```
 
+## Database backend (SQLite dev / SQL Server prod — Phase 4)
+
+The backend is configurable. With no configuration the app uses the local
+**SQLite** file (`gemini_erp/gemini_erp.db`), so development and packaged
+single-user builds need nothing extra.
+
+To run against **Microsoft SQL Server** (multi-user), create a `.env` file in
+`gemini_erp/` with a `GEMINI_DB_URL`. Everything else — models, services,
+reports — is unchanged (the SQLAlchemy payoff).
+
+```
+# gemini_erp/.env  (gitignored)
+# Windows / Trusted_Connection auth against a local SQL Server Express instance:
+GEMINI_DB_URL=mssql+pyodbc://HP\GEMINI/GeminiERP?driver=ODBC+Driver+17+for+SQL+Server&Trusted_Connection=yes&TrustServerCertificate=yes
+
+# SQL-login auth instead (URL-encode any @ / : in the password, e.g. @ -> %40):
+# GEMINI_DB_URL=mssql+pyodbc://user:pass@HOST\INSTANCE/GeminiERP?driver=ODBC+Driver+17+for+SQL+Server&TrustServerCertificate=yes
+```
+
+Requirements:
+- **pyodbc** + **python-dotenv** (already in `requirements.txt`).
+- A Microsoft **ODBC Driver for SQL Server** installed on each client (Driver 17
+  or 18; match the `driver=` value in the URL to what is installed —
+  `python -c "import pyodbc; print(pyodbc.drivers())"` lists them). Driver 18
+  defaults `Encrypt=yes`, hence `TrustServerCertificate=yes` for a local dev
+  instance.
+- Create the schema on the server: `python gemini_erp/create_db.py` — it prints
+  `Backend: SQL Server` so you can confirm it hit MSSQL, not SQLite.
+- `gemini_erp/reset_dev_db.py` drops and recreates every table on the current
+  backend (use after a schema change). **Destructive — development only.**
+
 ## OCR setup (Phase 3 — separate Python 3.13 venv)
 
 PaddlePaddle (PaddleOCR's backend) has no wheels for Python 3.14, so OCR runs

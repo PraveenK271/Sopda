@@ -10,6 +10,7 @@ import logging
 from datetime import date as date_type
 from decimal import ROUND_HALF_UP, Decimal
 
+from sqlalchemy import false, true
 from database import get_session
 from models import (
     Item,
@@ -117,7 +118,7 @@ class PurchaseService:
                 .filter(
                     StockTransaction.reference_type == "PURCHASE",
                     StockTransaction.reference_id == invoice_id,
-                    StockTransaction.is_deleted.is_(False),
+                    StockTransaction.is_deleted == false(),
                 )
                 .all()
             )
@@ -130,7 +131,7 @@ class PurchaseService:
                 .filter(
                     JournalEntry.reference_type == "PURCHASE",
                     JournalEntry.reference_id == invoice_id,
-                    JournalEntry.is_deleted.is_(False),
+                    JournalEntry.is_deleted == false(),
                 )
                 .all()
             )
@@ -260,7 +261,7 @@ class PurchaseService:
         try:
             invoices = (
                 session.query(PurchaseInvoice)
-                .filter(PurchaseInvoice.is_deleted.is_(False))
+                .filter(PurchaseInvoice.is_deleted == false())
                 .order_by(PurchaseInvoice.date.desc(), PurchaseInvoice.id.desc())
                 .all()
             )

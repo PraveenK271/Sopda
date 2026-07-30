@@ -2,6 +2,7 @@
 
 import logging
 
+from sqlalchemy import false, true
 from database import get_session
 from models import LedgerAccount, Supplier
 
@@ -56,7 +57,7 @@ class SupplierService:
         try:
             suppliers = (
                 session.query(Supplier)
-                .filter(Supplier.is_deleted.is_(False))
+                .filter(Supplier.is_deleted == false())
                 .order_by(Supplier.id)
                 .all()
             )

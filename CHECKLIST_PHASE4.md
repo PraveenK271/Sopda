@@ -86,29 +86,56 @@ the affected milestone until the choice is locked.
 
 ---
 
-## Milestone 24 — SQL Server migration (config-driven DB)
+## Milestone 24 — SQL Server migration (config-driven DB)  ✅ DONE (2026-07-29)
 
-- [ ] Make the DB connection **configurable** instead of hardcoded SQLite in
-      `database.py`: read a `GEMINI_DB_URL` env var (or a `settings.ini`),
-      defaulting to the current SQLite file so dev is unchanged. One code path,
-      two backends (the SQLAlchemy payoff).
-- [ ] Add the driver to a new `requirements` entry (`pyodbc`) and document
-      installing **ODBC Driver 18 for SQL Server** + building the MSSQL URL
-      (`mssql+pyodbc://user:pass@host/GeminiERP?driver=ODBC+Driver+18+for+SQL+Server`)
-      in `README.md`.
-- [ ] Audit models for SQLite-only assumptions (e.g. `Numeric`/`Text`/`Boolean`/
-      `DateTime` all map cleanly; check any default/`autoincrement` reliance).
-      Fix anything MSSQL rejects.
-- [ ] `create_db.py` runs against MSSQL: point `GEMINI_DB_URL` at a SQL Server
-      Express instance, create all tables + `ensure_system_accounts()`.
-- [ ] **Optional data migration script** — copy existing SQLite rows into MSSQL
-      (per-table, respecting FK order) for anyone who wants their dev data; a
-      fresh MSSQL start is also fine (dev fixtures are disposable).
-- [ ] **Test it:** with `GEMINI_DB_URL` pointed at SQL Server, run a subset of
-      the existing `check_milestone*.py` scripts (e.g. M3 sale loop, M7 purchase,
-      M11 accounting) and confirm identical behaviour to SQLite — same stock
-      math, same balanced journal entries. Behaviour parity across backends is
-      the whole goal of this milestone.
+Locked decisions: **SQL Server Express on the LAN** (instance `HP\GEMINI`,
+Windows `Trusted_Connection` auth) via **pyodbc**. The installed client driver
+is **ODBC Driver 17** (not 18); the `.env` URL uses Driver 17 accordingly. The
+`.env` lives in `gemini_erp/` and is gitignored.
+
+- [x] Made the DB connection **configurable** in `database.py`: `load_dotenv()`
+      then read `GEMINI_DB_URL`, defaulting to the SQLite file so dev/packaged
+      single-user builds are unchanged. Backend-aware `connect_args`
+      (`check_same_thread` for SQLite only). Kept the frozen-aware app-root path.
+- [x] Added `pyodbc` + `python-dotenv` to `requirements.txt`. MSSQL URL shape +
+      ODBC-driver note documented in `README.md`.
+- [x] `create_db.py` prints the backend (`Backend: SQL Server`) so a run can be
+      confirmed to have hit MSSQL, not SQLite.
+- [x] Added `reset_dev_db.py` (dev utility: drop + recreate on the current
+      backend) for rebuilding after a schema/index change. **Destructive — dev
+      only.**
+- [x] **Model audit — models were already MSSQL-clean** (explicit `String(n)`,
+      `Numeric(p,s)`, `Text`, plain `primary_key=True`, no `autoincrement`).
+      **Four real incompatibilities surfaced during the check-script run and were
+      fixed (no business-logic change):**
+  1. **Boolean filters** `.is_(False)` rendered `IS 0`, which MSSQL rejects
+     (`IS` needs NULL). Replaced with `== false()`/`== true()` (renders `= 0`,
+     valid on both) across 9 services + 3 check scripts. Columns are `NOT NULL`
+     so semantics are identical.
+  2. **`ledger_accounts.code`** was a nullable `UNIQUE` column; SQL Server allows
+     only ONE NULL row there, but customer/supplier subledgers have `code=NULL`.
+     Switched to a **filtered unique index** (`WHERE code IS NOT NULL`,
+     `mssql_where`/`sqlite_where`) — "unique among non-null codes" on both.
+  3. **Aggregate `FILTER (WHERE …)`** in the stock calc (`item_service`) — SQLite
+     supports it, MSSQL does not. Rewrote as `SUM(CASE WHEN … THEN qty ELSE 0)`.
+  4. **`stock_transactions.date`** was `DateTime` but always stores a calendar
+     `date`; the MSSQL pyodbc `DateTime` bind-processor calls `.tzinfo` on a
+     `date` and crashes. Changed the column to `Date` (matches every other
+     business-date column). Requires a table rebuild (`reset_dev_db.py`).
+- [x] `create_db.py` / `reset_dev_db.py` run clean against `HP\GEMINI`, creating
+      all 16 tables + `ensure_system_accounts()`.
+- [ ] Optional SQLite→MSSQL data-migration script — **skipped** (dev fixtures are
+      disposable; fresh MSSQL start chosen).
+- [x] **Tested — behaviour parity confirmed both directions:**
+      `check_milestone3` (sale loop + stock deduction + GST split CGST/SGST vs
+      IGST) and `check_milestone11` (accounting engine, balanced journals) **PASS
+      on SQL Server AND on SQLite**, identical numbers (stock 100→90→85, journals
+      balanced). `check_b2c_state.py` from the plan doesn't exist; the intra/
+      inter-state GST split it referred to is covered inside M3.
+      NOTE: `check_milestone2.py` fails on BOTH backends with
+      `KeyError: 'current_stock'` — a **pre-existing stale-check bug** (the script
+      reads a `current_stock` key that `ItemService.list_items()` doesn't return),
+      unrelated to the DB switch. Flagged for a later cleanup, not part of M24.
 
 ---
 

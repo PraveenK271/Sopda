@@ -13,6 +13,7 @@ import logging
 from datetime import date as date_type
 from decimal import Decimal
 
+from sqlalchemy import false, true
 from database import get_session
 from models import BankAccount, BankStatementLine, LedgerAccount, Payment, Receipt
 from services.accounting_service import AccountingService
@@ -76,7 +77,7 @@ class BankingService:
         try:
             banks = (
                 session.query(BankAccount)
-                .filter(BankAccount.is_deleted.is_(False))
+                .filter(BankAccount.is_deleted == false())
                 .order_by(BankAccount.name)
                 .all()
             )
@@ -111,7 +112,7 @@ class BankingService:
                 session.query(LedgerAccount)
                 .filter(
                     LedgerAccount.bank_account_id == bank_account_id,
-                    LedgerAccount.is_deleted.is_(False),
+                    LedgerAccount.is_deleted == false(),
                 )
                 .first()
             )
@@ -126,7 +127,7 @@ class BankingService:
         party_id = customer_id if customer_id is not None else supplier_id
         ledger = (
             session.query(LedgerAccount)
-            .filter(column == party_id, LedgerAccount.is_deleted.is_(False))
+            .filter(column == party_id, LedgerAccount.is_deleted == false())
             .first()
         )
         if ledger is None:
@@ -200,7 +201,7 @@ class BankingService:
         try:
             receipts = (
                 session.query(Receipt)
-                .filter(Receipt.is_deleted.is_(False))
+                .filter(Receipt.is_deleted == false())
                 .order_by(Receipt.date.desc(), Receipt.id.desc())
                 .all()
             )
@@ -291,7 +292,7 @@ class BankingService:
         try:
             payments = (
                 session.query(Payment)
-                .filter(Payment.is_deleted.is_(False))
+                .filter(Payment.is_deleted == false())
                 .order_by(Payment.date.desc(), Payment.id.desc())
                 .all()
             )
@@ -364,8 +365,8 @@ class BankingService:
                 session.query(BankStatementLine)
                 .filter(
                     BankStatementLine.bank_account_id == bank_account_id,
-                    BankStatementLine.is_matched.is_(False),
-                    BankStatementLine.is_deleted.is_(False),
+                    BankStatementLine.is_matched == false(),
+                    BankStatementLine.is_deleted == false(),
                 )
                 .order_by(BankStatementLine.date, BankStatementLine.id)
                 .all()
@@ -385,7 +386,7 @@ class BankingService:
                 session.query(BankStatementLine)
                 .filter(
                     BankStatementLine.bank_account_id == bank_account_id,
-                    BankStatementLine.is_deleted.is_(False),
+                    BankStatementLine.is_deleted == false(),
                 )
                 .order_by(BankStatementLine.date, BankStatementLine.id)
                 .all()
@@ -429,7 +430,7 @@ class BankingService:
                 session.query(matched_id_column)
                 .filter(
                     matched_id_column.isnot(None),
-                    BankStatementLine.is_deleted.is_(False),
+                    BankStatementLine.is_deleted == false(),
                 )
             )
             moves = (
@@ -437,7 +438,7 @@ class BankingService:
                 .filter(
                     move_cls.payment_mode == "BANK",
                     move_cls.bank_account_id == bank_account_id,
-                    move_cls.is_deleted.is_(False),
+                    move_cls.is_deleted == false(),
                     move_cls.id.notin_(already_matched),
                 )
                 .order_by(move_cls.date, move_cls.id)

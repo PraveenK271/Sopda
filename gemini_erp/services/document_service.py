@@ -11,6 +11,7 @@ import shutil
 from datetime import datetime
 from pathlib import Path
 
+from sqlalchemy import false, true
 from database import get_app_root, get_session
 from models import Document
 from services.ocr_service import OCRService
@@ -136,7 +137,7 @@ class DocumentService:
         """
         session = get_session()
         try:
-            query = session.query(Document).filter(Document.is_deleted.is_(False))
+            query = session.query(Document).filter(Document.is_deleted == false())
             if document_type is not None:
                 query = query.filter(Document.document_type == document_type)
             documents = query.order_by(Document.id.desc()).all()

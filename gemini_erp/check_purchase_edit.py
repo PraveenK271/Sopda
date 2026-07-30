@@ -10,6 +10,7 @@ Run with: python check_purchase_edit.py
 import time
 from datetime import date
 
+from sqlalchemy import false, true
 from database import get_session
 from models import JournalEntry, PurchaseInvoice, PurchaseInvoiceItem, StockTransaction
 from services.accounting_service import AccountingService
@@ -38,7 +39,7 @@ def _active(session, model, invoice_id):
         .filter(
             model.reference_type == "PURCHASE",
             model.reference_id == invoice_id,
-            model.is_deleted.is_(False),
+            model.is_deleted == false(),
         )
         .all()
     )
@@ -95,7 +96,7 @@ def main():
             session.query(PurchaseInvoiceItem)
             .filter(
                 PurchaseInvoiceItem.invoice_id == invoice_id,
-                PurchaseInvoiceItem.is_deleted.is_(False),
+                PurchaseInvoiceItem.is_deleted == false(),
             )
             .all()
         )

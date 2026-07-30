@@ -27,7 +27,7 @@ Run with: ../venv/Scripts/python.exe check_milestone16.py
 from datetime import date
 from decimal import Decimal
 
-from sqlalchemy import func
+from sqlalchemy import false, func, true
 
 from database import get_session
 from models import (
@@ -150,7 +150,7 @@ def _cash_dr_balance(session):
             func.coalesce(func.sum(JournalEntryLine.debit), 0),
             func.coalesce(func.sum(JournalEntryLine.credit), 0),
         )
-        .filter(JournalEntryLine.account_id == cash.id, JournalEntryLine.is_deleted.is_(False))
+        .filter(JournalEntryLine.account_id == cash.id, JournalEntryLine.is_deleted == false())
         .one()
     )
     opening = float(cash.opening_balance)
@@ -165,7 +165,7 @@ def _ledger_dr_balance(session, account_id):
             func.coalesce(func.sum(JournalEntryLine.debit), 0),
             func.coalesce(func.sum(JournalEntryLine.credit), 0),
         )
-        .filter(JournalEntryLine.account_id == account_id, JournalEntryLine.is_deleted.is_(False))
+        .filter(JournalEntryLine.account_id == account_id, JournalEntryLine.is_deleted == false())
         .one()
     )
     acct = session.get(LedgerAccount, account_id)

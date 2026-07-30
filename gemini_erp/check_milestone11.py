@@ -15,7 +15,7 @@ Run with: python check_milestone11.py
 from datetime import date
 from decimal import Decimal
 
-from sqlalchemy import func
+from sqlalchemy import false, func, true
 
 from database import get_session
 from models import (
@@ -127,7 +127,7 @@ def _account_balance(session, account_id):
             func.coalesce(func.sum(JournalEntryLine.debit), 0),
             func.coalesce(func.sum(JournalEntryLine.credit), 0),
         )
-        .filter(JournalEntryLine.account_id == account_id, JournalEntryLine.is_deleted.is_(False))
+        .filter(JournalEntryLine.account_id == account_id, JournalEntryLine.is_deleted == false())
         .one()
     )
     return float(dr), float(cr)

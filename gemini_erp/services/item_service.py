@@ -2,7 +2,7 @@
 
 import logging
 
-from sqlalchemy import func
+from sqlalchemy import case, false, func, true
 from sqlalchemy.orm import Session
 
 from database import get_session
@@ -29,7 +29,7 @@ class ItemService:
         try:
             existing = (
                 session.query(Item)
-                .filter(Item.code == code, Item.is_deleted.is_(False))
+                .filter(Item.code == code, Item.is_deleted == false())
                 .first()
             )
             if existing is not None:
@@ -87,7 +87,7 @@ class ItemService:
                 .filter(
                     Item.code == code,
                     Item.id != item_id,
-                    Item.is_deleted.is_(False),
+                    Item.is_deleted == false(),
                 )
                 .first()
             )
@@ -119,7 +119,7 @@ class ItemService:
         try:
             items = (
                 session.query(Item)
-                .filter(Item.is_deleted.is_(False))
+                .filter(Item.is_deleted == false())
                 .order_by(Item.id)
                 .all()
             )
@@ -158,18 +158,27 @@ class ItemService:
     @staticmethod
     def _calculate_current_stock(session: Session, item: Item) -> float:
         """current_stock = opening_stock + sum(IN) - sum(OUT) from stock_transactions."""
+        # SUM(CASE WHEN ...) rather than the SQL aggregate FILTER clause: SQLite
+        # supports FILTER but SQL Server does not, so CASE keeps this stock query
+        # backend-neutral (same result on both).
         in_qty, out_qty = (
             session.query(
                 func.coalesce(
-                    func.sum(StockTransaction.quantity).filter(StockTransaction.type == "IN"), 0
+                    func.sum(
+                        case((StockTransaction.type == "IN", StockTransaction.quantity), else_=0)
+                    ),
+                    0,
                 ),
                 func.coalesce(
-                    func.sum(StockTransaction.quantity).filter(StockTransaction.type == "OUT"), 0
+                    func.sum(
+                        case((StockTransaction.type == "OUT", StockTransaction.quantity), else_=0)
+                    ),
+                    0,
                 ),
             )
             .filter(
                 StockTransaction.item_id == item.id,
-                StockTransaction.is_deleted.is_(False),
+                StockTransaction.is_deleted == false(),
             )
             .one()
         )

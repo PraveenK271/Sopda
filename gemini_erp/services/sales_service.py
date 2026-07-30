@@ -9,6 +9,7 @@ import logging
 from datetime import date as date_type
 from decimal import ROUND_HALF_UP, Decimal
 
+from sqlalchemy import false, true
 from database import get_session
 from models import Customer, Item, SalesInvoice, SalesInvoiceItem, StockTransaction
 from services.accounting_service import AccountingService
@@ -146,7 +147,7 @@ class SalesService:
         try:
             invoices = (
                 session.query(SalesInvoice)
-                .filter(SalesInvoice.is_deleted.is_(False))
+                .filter(SalesInvoice.is_deleted == false())
                 .order_by(SalesInvoice.date.desc(), SalesInvoice.id.desc())
                 .all()
             )

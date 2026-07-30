@@ -9,6 +9,7 @@ import logging
 from datetime import date as date_type
 from decimal import Decimal
 
+from sqlalchemy import false, true
 from database import get_session
 from models import Customer, JournalEntry, JournalEntryLine, LedgerAccount, Supplier
 
@@ -22,7 +23,7 @@ class AccountingService:
     def get_account_by_code(session, code: str) -> LedgerAccount:
         account = (
             session.query(LedgerAccount)
-            .filter(LedgerAccount.code == code, LedgerAccount.is_deleted.is_(False))
+            .filter(LedgerAccount.code == code, LedgerAccount.is_deleted == false())
             .first()
         )
         if account is None:
@@ -85,7 +86,7 @@ class AccountingService:
         try:
             accounts = (
                 session.query(LedgerAccount)
-                .filter(LedgerAccount.is_deleted.is_(False))
+                .filter(LedgerAccount.is_deleted == false())
                 .order_by(LedgerAccount.account_type, LedgerAccount.name)
                 .all()
             )
@@ -115,7 +116,7 @@ class AccountingService:
                 .filter(
                     JournalEntry.date >= date_from,
                     JournalEntry.date <= date_to,
-                    JournalEntry.is_deleted.is_(False),
+                    JournalEntry.is_deleted == false(),
                 )
                 .order_by(JournalEntry.date.desc(), JournalEntry.id.desc())
                 .all()
@@ -168,8 +169,8 @@ class AccountingService:
                 .join(JournalEntry, JournalEntryLine.entry_id == JournalEntry.id)
                 .filter(
                     JournalEntryLine.account_id == account_id,
-                    JournalEntryLine.is_deleted.is_(False),
-                    JournalEntry.is_deleted.is_(False),
+                    JournalEntryLine.is_deleted == false(),
+                    JournalEntry.is_deleted == false(),
                 )
             )
             if date_from:
@@ -235,8 +236,8 @@ class AccountingService:
                 )
                 .join(JournalEntry, JournalEntryLine.entry_id == JournalEntry.id)
                 .filter(
-                    JournalEntryLine.is_deleted.is_(False),
-                    JournalEntry.is_deleted.is_(False),
+                    JournalEntryLine.is_deleted == false(),
+                    JournalEntry.is_deleted == false(),
                 )
             )
             if as_of_date:
@@ -249,7 +250,7 @@ class AccountingService:
 
             accounts = (
                 session.query(LedgerAccount)
-                .filter(LedgerAccount.is_deleted.is_(False))
+                .filter(LedgerAccount.is_deleted == false())
                 .all()
             )
 
@@ -292,8 +293,8 @@ class AccountingService:
             )
             .join(JournalEntry, JournalEntryLine.entry_id == JournalEntry.id)
             .filter(
-                JournalEntryLine.is_deleted.is_(False),
-                JournalEntry.is_deleted.is_(False),
+                JournalEntryLine.is_deleted == false(),
+                JournalEntry.is_deleted == false(),
             )
         )
         if date_from:
@@ -317,7 +318,7 @@ class AccountingService:
             accounts = (
                 session.query(LedgerAccount)
                 .filter(
-                    LedgerAccount.is_deleted.is_(False),
+                    LedgerAccount.is_deleted == false(),
                     LedgerAccount.account_type.in_(["INCOME", "EXPENSE"]),
                 )
                 .all()
@@ -360,7 +361,7 @@ class AccountingService:
             totals = AccountingService._line_totals_by_account(session, date_to=as_of_date)
             accounts = (
                 session.query(LedgerAccount)
-                .filter(LedgerAccount.is_deleted.is_(False))
+                .filter(LedgerAccount.is_deleted == false())
                 .all()
             )
 
@@ -413,8 +414,8 @@ class AccountingService:
                 .join(Customer, LedgerAccount.customer_id == Customer.id)
                 .filter(
                     LedgerAccount.customer_id.isnot(None),
-                    LedgerAccount.is_deleted.is_(False),
-                    Customer.is_deleted.is_(False),
+                    LedgerAccount.is_deleted == false(),
+                    Customer.is_deleted == false(),
                 )
                 .all()
             )
@@ -454,8 +455,8 @@ class AccountingService:
                 .join(Supplier, LedgerAccount.supplier_id == Supplier.id)
                 .filter(
                     LedgerAccount.supplier_id.isnot(None),
-                    LedgerAccount.is_deleted.is_(False),
-                    Supplier.is_deleted.is_(False),
+                    LedgerAccount.is_deleted == false(),
+                    Supplier.is_deleted == false(),
                 )
                 .all()
             )
