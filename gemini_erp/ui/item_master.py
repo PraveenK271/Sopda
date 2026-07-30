@@ -149,11 +149,10 @@ class ItemMasterScreen(QWidget):
         self._items = items
         self.table.setRowCount(len(items))
         for row, item in enumerate(items):
-            current_stock = self.item_service.get_current_stock(item["id"])
             values = [
                 item["id"], item["code"], item["name"], item["hsn_code"] or "",
                 item["gst_rate"], item["unit"] or "", item["opening_stock"],
-                item["reorder_level"], current_stock,
+                item["reorder_level"], item["current_stock"],
             ]
             for col, value in enumerate(values):
                 self.table.setItem(row, col, QTableWidgetItem(str(value)))

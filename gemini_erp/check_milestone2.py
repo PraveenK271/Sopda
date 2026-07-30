@@ -1,26 +1,23 @@
 """Milestone 2 check: add an item with opening stock 100 and confirm
-get_current_stock / list_items report current stock = 100.
+get_current_stock AND list_items both report current stock = 100.
 
 Run with: python check_milestone2.py
 """
 
-from database import get_session
-from models import Item
+from datetime import datetime
+
 from services.item_service import ItemService
 
-TEST_CODE = "CHK-M2-001"
+# A unique code per run keeps this check idempotent without ever deleting rows.
+# (The earlier version hard-deleted a fixed-code item on each run, which both
+# broke the soft-delete rule and failed on SQL Server when the item was already
+# referenced by invoice lines. A fresh item has no stock movements, so its
+# current stock is exactly its opening stock.)
+TEST_CODE = f"CHK-M2-{datetime.now():%Y%m%d%H%M%S}"
 
 
 def main():
     service = ItemService()
-
-    # Remove a previous run's check item so this script is repeatable.
-    session = get_session()
-    existing = session.query(Item).filter(Item.code == TEST_CODE).first()
-    if existing:
-        session.delete(existing)
-        session.commit()
-    session.close()
 
     item = service.add_item(
         code=TEST_CODE,

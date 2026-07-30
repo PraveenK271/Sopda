@@ -123,6 +123,29 @@ class ItemService:
                 .order_by(Item.id)
                 .all()
             )
+            # Net movement (IN - OUT) per item in ONE grouped query, so the whole
+            # list costs two queries instead of one get_current_stock per row.
+            # Stock is still derived from stock_transactions (never stored), same
+            # formula as _calculate_current_stock — the stock rule is preserved.
+            movement_rows = (
+                session.query(
+                    StockTransaction.item_id,
+                    func.coalesce(
+                        func.sum(
+                            case(
+                                (StockTransaction.type == "IN", StockTransaction.quantity),
+                                (StockTransaction.type == "OUT", -StockTransaction.quantity),
+                                else_=0,
+                            )
+                        ),
+                        0,
+                    ),
+                )
+                .filter(StockTransaction.is_deleted == false())
+                .group_by(StockTransaction.item_id)
+                .all()
+            )
+            net_movement = {item_id: float(net) for item_id, net in movement_rows}
             return [
                 {
                     "id": item.id,
@@ -133,6 +156,7 @@ class ItemService:
                     "unit": item.unit,
                     "opening_stock": float(item.opening_stock),
                     "reorder_level": float(item.reorder_level),
+                    "current_stock": float(item.opening_stock) + net_movement.get(item.id, 0.0),
                 }
                 for item in items
             ]
