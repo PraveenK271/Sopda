@@ -45,8 +45,11 @@ def _migrate_add_column(table: str, column: str, ddl_type: str) -> None:
     existing = {col["name"] for col in inspector.get_columns(table)}
     if column in existing:
         return
+    # SQL Server's add-column syntax is `ALTER TABLE t ADD col type` (no COLUMN
+    # keyword); SQLite/others use `ADD COLUMN`.
+    add_clause = "ADD" if engine.dialect.name == "mssql" else "ADD COLUMN"
     with engine.begin() as conn:
-        conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {ddl_type}"))
+        conn.execute(text(f"ALTER TABLE {table} {add_clause} {column} {ddl_type}"))
     print(f"Migrated: added {table}.{column}")
 
 
@@ -64,6 +67,11 @@ def initialize_database() -> None:
     # ledger_accounts table (create_all never alters existing tables).
     Base.metadata.create_all(engine)
     _migrate_add_column("ledger_accounts", "bank_account_id", "INTEGER REFERENCES bank_accounts(id)")
+    # M29c: manager approval fields on existing documents tables.
+    _migrate_add_column("documents", "approval_status", "VARCHAR(10)")
+    _migrate_add_column("documents", "approved_by", "VARCHAR(50)")
+    _migrate_add_column("documents", "approved_date", "DATETIME")
+    _migrate_add_column("documents", "approval_note", "VARCHAR(255)")
 
     session = SessionLocal()
     try:

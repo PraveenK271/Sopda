@@ -138,6 +138,10 @@ uvicorn api.main:app --host 0.0.0.0 --port 8000
   `Authorization: Bearer <token>`. `GET /api/me` shows the role's permitted
   modules. RBAC is enforced per endpoint using the same role permissions as the
   desktop (e.g. a Sales User gets `/api/stock` but not `/api/outstanding`).
+- The one WRITE action (M29c): a manager can approve/reject a scanned supplier
+  bill on the go — `GET /api/documents` (list), `POST /api/documents/{id}/approve`,
+  `POST /api/documents/{id}/reject` (module `documents`). The sign-off records
+  who and when; creating the purchase invoice from a bill stays a desktop step.
 - Config (env): `GEMINI_JWT_SECRET` (signing key — a dev fallback is used with a
   warning if unset), `GEMINI_JWT_TTL_MINUTES` (default 720), `GEMINI_API_CORS_ORIGINS`
   (comma-separated PWA origins; default `*`). The API reads the same

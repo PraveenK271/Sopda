@@ -320,9 +320,27 @@ touches the DB; it also becomes the future secure remote-access layer.
 - [ ] **Test it:** load on a phone over the LAN/VPN, log in as each role, confirm
       only permitted data appears and the numbers match the desktop.
 
-### M29c — Approve-a-scanned-bill (optional fast-follow, the one write)
-- [ ] `POST /api/documents/{id}/approve` reusing the purchase/document save path;
-      the single write action for a manager on the go. Deferred until M29a/b land.
+### M29c — Approve-a-scanned-bill (the one write)  ✅ DONE (2026-07-30)
+- [x] Manager sign-off model on `documents`: nullable `approval_status`
+      (`PENDING`/`APPROVED`/`REJECTED`, ORM default PENDING; NULL on old rows =
+      PENDING), `approved_by`, `approved_date`, `approval_note`. Added to
+      existing tables via a **backend-aware** `_migrate_add_column`
+      (SQL Server `ADD` vs SQLite `ADD COLUMN` — also fixes a latent MSSQL bug in
+      that helper).
+- [x] `DocumentService.set_approval(id, decision, approved_by, note)` (one
+      transaction; validates decision; 'not found' -> ValueError). `list_documents`
+      now returns the approval fields via a shared `_to_dict`.
+- [x] `api/routers/documents.py` (module `documents`): `GET /api/documents`
+      (+ optional `?approval_status=`), `POST /api/documents/{id}/approve`,
+      `POST /api/documents/{id}/reject` — records the JWT user as `approved_by`.
+      NOTE (honest scope): approve is a review sign-off, NOT invoice creation —
+      building a purchase invoice from raw OCR needs the desktop's interactive
+      item mapping, so that stays a desktop step.
+- [x] **Tested — `check_milestone29c.py` (FastAPI TestClient) PASS on SQL Server
+      AND SQLite:** list + approve + reject persist the decision (approved_by =
+      JWT user, approved_date set); a Sales User (no `documents`) is 403 on list
+      and approve; a missing document -> 404. Regression: M22/M23 OCR/document
+      checks + M29a still PASS.
 
 ---
 

@@ -13,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from api.auth import router as auth_router
 from api.config import CORS_ORIGINS
-from api.routers import dashboard, gst, invoices, outstanding, stock
+from api.routers import dashboard, documents, gst, invoices, outstanding, stock
 
 app = FastAPI(title="Gemini ERP API", version="1.0", description="Read-first mobile companion API")
 
@@ -31,6 +31,7 @@ app.include_router(outstanding.router)
 app.include_router(stock.router)
 app.include_router(invoices.router)
 app.include_router(gst.router)
+app.include_router(documents.router)
 
 
 @app.get("/api/health", tags=["health"])

@@ -141,21 +141,62 @@ class DocumentService:
             if document_type is not None:
                 query = query.filter(Document.document_type == document_type)
             documents = query.order_by(Document.id.desc()).all()
-            return [
-                {
-                    "id": d.id,
-                    "file_name": d.file_name,
-                    "file_path": d.file_path,
-                    "upload_date": d.upload_date,
-                    "document_type": d.document_type,
-                    "ocr_status": d.ocr_status,
-                    "ocr_confidence": d.ocr_confidence,
-                    "linked_purchase_invoice_id": d.linked_purchase_invoice_id,
-                }
-                for d in documents
-            ]
+            return [self._to_dict(d) for d in documents]
         except Exception:
             logger.exception("Failed to list documents")
             raise
         finally:
             session.close()
+
+    def set_approval(
+        self, document_id: int, decision: str, approved_by: str | None, note: str | None = None
+    ) -> dict:
+        """Record a manager's APPROVE/REJECT sign-off on a scanned document.
+
+        This is the mobile companion's single write action (M29c) — a review
+        decision, not invoice creation (which stays an interactive desktop step).
+        Returns the updated document dict.
+        """
+        decision = (decision or "").upper()
+        if decision not in ("APPROVED", "REJECTED"):
+            raise ValueError("decision must be 'APPROVED' or 'REJECTED'")
+
+        session = get_session()
+        try:
+            document = session.get(Document, document_id)
+            if document is None or document.is_deleted:
+                raise ValueError(f"Document {document_id} not found")
+            document.approval_status = decision
+            document.approved_by = approved_by
+            document.approved_date = datetime.utcnow()
+            document.approval_note = note
+            document.modified_by = approved_by
+            session.commit()
+            session.refresh(document)
+            result = self._to_dict(document)
+            logger.info("Document %s %s by %s", document_id, decision, approved_by)
+            return result
+        except Exception:
+            session.rollback()
+            logger.exception("Failed to set approval on document %s", document_id)
+            raise
+        finally:
+            session.close()
+
+    @staticmethod
+    def _to_dict(d: Document) -> dict:
+        return {
+            "id": d.id,
+            "file_name": d.file_name,
+            "file_path": d.file_path,
+            "upload_date": d.upload_date,
+            "document_type": d.document_type,
+            "ocr_status": d.ocr_status,
+            "ocr_confidence": d.ocr_confidence,
+            "linked_purchase_invoice_id": d.linked_purchase_invoice_id,
+            # NULL on pre-M29c rows means never reviewed -> PENDING.
+            "approval_status": d.approval_status or "PENDING",
+            "approved_by": d.approved_by,
+            "approved_date": d.approved_date,
+            "approval_note": d.approval_note,
+        }

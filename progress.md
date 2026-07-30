@@ -733,5 +733,26 @@ Regression: `check_milestone11` (purchase accounting) + `check_milestone18`
   (generic) / no-token 401 / RBAC 200-403 per role / dashboard hides receivables
   from a Sales User / rate-limit 429 / numbers match the desktop services. Live
   uvicorn run also verified (health 200).
-- **Next: M29b** (installable PWA over this API, HTTPS/VPN) — front-end work;
-  optional M29c (approve-a-scan write) after.
+- Next: M29b (installable PWA over this API, HTTPS/VPN) — front-end work.
+
+### Milestone 29c — Approve-a-scanned-bill (the one API write) — DONE 2026-07-30
+- Manager sign-off on scanned supplier bills. `models/document.py`: nullable
+  `approval_status` (PENDING/APPROVED/REJECTED, ORM default PENDING; NULL on old
+  rows treated as PENDING), `approved_by`, `approved_date`, `approval_note`.
+  Migrated onto existing tables via `_migrate_add_column`, now **backend-aware**
+  (`ADD` on SQL Server vs `ADD COLUMN` on SQLite — this also fixed a latent MSSQL
+  bug in that helper, which had never fired because prior columns were built by
+  create_all on the fresh MSSQL DB).
+- `DocumentService.set_approval(id, decision, approved_by, note)` (one txn;
+  validates decision; not-found -> ValueError). `list_documents` returns the
+  approval fields via a shared `_to_dict`.
+- `api/routers/documents.py` (module `documents`): `GET /api/documents`
+  (+ `?approval_status=`), `POST /api/documents/{id}/approve|reject`; records the
+  JWT user as approved_by. Honest scope: approve = review sign-off, NOT invoice
+  creation (that needs the desktop's interactive item mapping).
+- `check_milestone29c.py` (FastAPI TestClient) PASS both backends: list/approve/
+  reject persist; Sales User 403 (no `documents`); missing doc 404. Regression
+  M22/M23 (OCR/documents) + M29a still PASS.
+- **Phase 4 is functionally complete except M29b (the PWA front-end).** All
+  backend milestones (M24 MSSQL, M25 settings/backup, M26/27 auth+RBAC, M28
+  concurrency, M29a API, M29c write) are done and tested on both backends.

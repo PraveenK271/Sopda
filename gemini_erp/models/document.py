@@ -37,4 +37,15 @@ class Document(Base, AuditMixin):
     ocr_raw_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     ocr_confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
 
+    # Manager sign-off on a scanned bill (Phase 4 M29c). Nullable so the column
+    # migrates cleanly onto existing tables on both backends; the ORM default
+    # sets 'PENDING' for new rows and the service treats NULL as PENDING.
+    # 'PENDING' | 'APPROVED' | 'REJECTED'
+    approval_status: Mapped[str | None] = mapped_column(
+        String(10), nullable=True, default="PENDING"
+    )
+    approved_by: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    approved_date: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    approval_note: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
     linked_purchase_invoice: Mapped["PurchaseInvoice | None"] = relationship()
