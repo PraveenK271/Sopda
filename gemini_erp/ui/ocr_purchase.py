@@ -32,6 +32,7 @@ from PySide6.QtWidgets import (
 )
 
 from services.document_service import DocumentService
+from services.session_context import SessionContext
 from services.ocr_service import confidence_band
 from services.purchase_service import PurchaseService
 from ui.purchase import PurchaseScreen
@@ -162,7 +163,7 @@ class OCRPurchaseScreen(PurchaseScreen):
             return
         try:
             document = self.document_service.save_document(
-                self._selected_file, created_by="ocr_screen"
+                self._selected_file, created_by=SessionContext.get_username()
             )
         except Exception as exc:
             logger.exception("Failed to save document before OCR")

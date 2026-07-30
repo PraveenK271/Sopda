@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
 )
 
 from services.banking_service import BankingService
+from services.session_context import SessionContext
 from services.customer_service import CustomerService
 from services.supplier_service import SupplierService
 
@@ -86,6 +87,7 @@ class BankAccountsTab(QWidget):
                 account_no=self.account_no_input.text().strip() or None,
                 ifsc=self.ifsc_input.text().strip() or None,
                 opening_balance=float(opening) if opening else 0.0,
+                created_by=SessionContext.get_username(),
             )
         except Exception as exc:
             logger.exception("Failed to add bank account")
@@ -280,6 +282,7 @@ class ReceiptsTab(_MoneyMoveTab):
                 date=data["date"], customer_id=data["party_id"], amount=data["amount"],
                 payment_mode=data["payment_mode"], bank_account_id=data["bank_account_id"],
                 reference_no=data["reference_no"], notes=data["notes"],
+                created_by=SessionContext.get_username(),
             )
         except Exception as exc:
             logger.exception("Failed to record receipt")
@@ -325,6 +328,7 @@ class PaymentsTab(_MoneyMoveTab):
                 date=data["date"], supplier_id=data["party_id"], amount=data["amount"],
                 payment_mode=data["payment_mode"], bank_account_id=data["bank_account_id"],
                 reference_no=data["reference_no"], notes=data["notes"],
+                created_by=SessionContext.get_username(),
             )
         except Exception as exc:
             logger.exception("Failed to record payment")

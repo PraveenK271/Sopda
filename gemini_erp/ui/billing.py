@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
 
 from reports.invoice_pdf import generate_invoice_pdf
 from services.customer_service import CustomerService
+from services.session_context import SessionContext
 from services.gst_service import split_gst
 from services.item_service import ItemService
 from services.sales_service import SalesService
@@ -179,6 +180,7 @@ class BillingScreen(QWidget):
                 gstin=self.new_customer_gstin.text().strip() or None,
                 address=self.new_customer_address.text().strip() or None,
                 state=self.new_customer_state.text().strip() or None,
+                created_by=SessionContext.get_username(),
             )
         except Exception as exc:
             logger.exception("Failed to add customer")
@@ -314,6 +316,7 @@ class BillingScreen(QWidget):
                     {"item_id": line["item_id"], "quantity": line["quantity"], "rate": line["rate"]}
                     for line in self.lines
                 ],
+                created_by=SessionContext.get_username(),
             )
         except Exception as exc:
             logger.exception("Failed to save invoice")

@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
 )
 
 from services.item_service import ItemService
+from services.session_context import SessionContext
 
 logger = logging.getLogger(__name__)
 
@@ -102,10 +103,11 @@ class ItemMasterScreen(QWidget):
         )
 
         try:
+            username = SessionContext.get_username()
             if self._editing_item_id is None:
-                self.item_service.add_item(**fields)
+                self.item_service.add_item(**fields, created_by=username)
             else:
-                self.item_service.update_item(self._editing_item_id, **fields)
+                self.item_service.update_item(self._editing_item_id, **fields, modified_by=username)
         except Exception as exc:
             action = "add" if self._editing_item_id is None else "update"
             logger.exception("Failed to %s item", action)

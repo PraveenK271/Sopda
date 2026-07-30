@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
 )
 
 from services.gst_service import split_gst
+from services.session_context import SessionContext
 from services.item_service import ItemService
 from services.purchase_service import PurchaseService
 from services.supplier_service import SupplierService
@@ -93,6 +94,7 @@ class AddItemDialog(QDialog):
                 unit=self.unit_input.text().strip() or None,
                 opening_stock=0,
                 reorder_level=self._to_float(self.reorder_level_input.text()),
+                created_by=SessionContext.get_username(),
             )
         except Exception as exc:
             logger.exception("Failed to add item")
@@ -257,6 +259,7 @@ class PurchaseScreen(QWidget):
                 gstin=self.new_supplier_gstin.text().strip() or None,
                 address=self.new_supplier_address.text().strip() or None,
                 state=self.new_supplier_state.text().strip() or None,
+                created_by=SessionContext.get_username(),
             )
         except Exception as exc:
             logger.exception("Failed to add supplier")
@@ -408,6 +411,7 @@ class PurchaseScreen(QWidget):
                     invoice_date=invoice_date,
                     supplier_id=supplier_data["id"],
                     lines=line_payload,
+                    modified_by=SessionContext.get_username(),
                 )
             else:
                 invoice = self.purchase_service.create_purchase_invoice(
@@ -415,6 +419,7 @@ class PurchaseScreen(QWidget):
                     invoice_date=invoice_date,
                     supplier_id=supplier_data["id"],
                     lines=line_payload,
+                    created_by=SessionContext.get_username(),
                 )
         except Exception as exc:
             action = "update" if editing else "save"

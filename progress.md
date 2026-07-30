@@ -622,3 +622,72 @@ Found during testing; see `CHECKLIST_ENHANCEMENTS.md` for the full checklist.
 
 Regression: `check_milestone11` (purchase accounting) + `check_milestone18`
 (GST registers) still PASS after refactoring `create_purchase_invoice`.
+
+---
+
+## Phase 4 — Going multi-user (see CHECKLIST_PHASE4.md)
+
+### Milestone 24 — SQL Server migration (config-driven DB) — DONE 2026-07-30
+- `database.py` reads `GEMINI_DB_URL` from `.env` (python-dotenv), falling back
+  to the local SQLite file. One code path, two backends. Fixed 4 MSSQL
+  incompatibilities (no logic change): `.is_(False)`→`== false()`; nullable
+  UNIQUE `ledger_accounts.code`→filtered unique index; aggregate `FILTER`→
+  `SUM(CASE WHEN…)`; `stock_transactions.date` `DateTime`→`Date`. `reset_dev_db.py`
+  added. Parity verified. SQL Server = `HP\GEMINI`, Windows auth, ODBC Driver 17.
+
+### check_milestone2 cleanup — DONE 2026-07-30
+- The long-broken `check_milestone2.py` is now fixed (NOTE: this supersedes the
+  "broken and intentionally left as-is" entry under Known issues above).
+  `ItemService.list_items()` again returns `current_stock` (derived in one
+  grouped query; the Items page dropped its per-row N+1). The check uses a
+  unique per-run item code — no hard delete, so no soft-delete violation and no
+  FK cascade on MSSQL. PASS both backends.
+
+### Milestone 25 — Company profile, Settings & Backup — DONE 2026-07-30
+- `models/company_profile.py` (single-row) + `SettingsService`; seller/bank/terms
+  now come from the DB, edited on the new **Settings** tab (`ui/settings.py`).
+  `reports/company_info.py` is seed-defaults only. `BackupService`: SQLite file
+  copy / MSSQL `BACKUP DATABASE`+`RESTORE VERIFYONLY` (raw pyodbc cursor —
+  SQLAlchemy silently no-ops BACKUP). `check_milestone25.py` PASS both backends.
+
+### Milestone 26 — Users, Roles & AuthService — DONE 2026-07-30
+- `models/role.py` (permissions = JSON-string Text), `models/user.py`
+  (`password_hash` only — NO plaintext `password` column ever), both + audit.
+- `services/permissions.py` — module keys + the 4 role permission sets (single
+  source of truth for UI and service).
+- `services/auth_service.py` — bcrypt via passlib (`bcrypt==4.0.1` PINNED;
+  passlib 1.7.4 breaks on 4.1+). `authenticate()` uses timing-safe `verify()` and
+  returns `None` identically for unknown-user and wrong-password. Passwords/hashes
+  never logged. `ensure_roles_and_admin()` seeds the 4 roles + a default admin
+  (`admin`/`Admin@1234`, `must_change_password=True`) only on an empty users
+  table; idempotent, wired into `create_db`. `check_milestone26.py` PASS both
+  backends.
+
+### Milestone 27 — Login + RBAC — DONE 2026-07-30
+- `services/session_context.py` — process-wide current user (`get_username()`
+  → "system" when logged out). `ui/login.py` (generic error, masked password,
+  5-attempt/30s lockout, Enter submits), `ui/change_password.py` (forced,
+  non-cancellable when `must_change_password`), `ui/user_management.py`
+  (Administrator-only; never shows a hash).
+- `main.py` — startup flow: bootstrap → login → forced password change →
+  MainWindow. Tabs are built ONLY for permitted modules (a disallowed screen is
+  never constructed, not hidden). Title shows `name (role)`. **Account → Logout**
+  returns to the login screen without restarting (main runs a login/exec loop).
+- `created_by`/`modified_by` wired to `SessionContext.get_username()` at every
+  saving UI call site (billing, purchase incl. edit + inline item/supplier,
+  items, banking receipt/payment/bank-account, OCR document save). Service
+  signatures unchanged — services stay unaware of the logged-in user.
+- `check_milestone27.py` PASS both backends (RBAC per-role module sets,
+  created_by wiring, SessionContext default, admin_reset_password). RBAC tab
+  construction also verified with an offscreen MainWindow smoke test per role
+  (deleted after passing, same approach as prior UI checks).
+
+### Known limitations (M26/M27 — out of scope, by design)
+- **Tab-level permissions only** — a role either sees a screen or it does not.
+  No read-only vs edit granularity within a screen yet.
+- No password reset by email (no email infra); no password expiry/history rules;
+  no two-factor auth.
+- Windows/AD integrated auth not used — the decision was app-level users with
+  hashed passwords (portable across SQLite/MSSQL).
+- Default admin credential is `admin`/`Admin@1234` on a fresh DB; it is forced
+  to change on first login. Change it before any real deployment.

@@ -43,10 +43,10 @@ the affected milestone until the choice is locked.
      best-supported combo.** (Needs the ODBC driver installed on each client.)
    - `pymssql` — no ODBC driver needed, but less featureful.
 
-3. **Authentication model (blocks M26/M27).**
-   - **App-level users in our own `users` table with hashed passwords (bcrypt
-     via `passlib`) — portable, matches the spec's Users/Roles tables, works the
-     same on SQLite dev and MSSQL prod.**
+3. **Authentication model (blocks M26/M27). — LOCKED: app-level users.**
+   - **[CHOSEN] App-level users in our own `users` table with hashed passwords
+     (bcrypt via `passlib`) — portable, matches the spec's Users/Roles tables,
+     works the same on SQLite dev and MSSQL prod. Built in M26/M27.**
    - Windows/AD integrated auth — nicer for an office domain, but couples us to
      Windows and is harder to test.
 
@@ -183,42 +183,57 @@ is **ODBC Driver 17** (not 18); the `.env` URL uses Driver 17 accordingly. The
 
 ---
 
-## Milestone 26 — Users & Roles (data + auth service)
+## Milestone 26 — Users & Roles (data + auth service)  ✅ DONE (2026-07-30)
 
-- [ ] `models/role.py` — `Role`: `id`, `name` (`'Administrator' | 'Accountant'
-      | 'Inventory Manager' | 'Sales User'`), `permissions` (JSON/text list of
-      allowed module keys) + audit.
-- [ ] `models/user.py` — `User`: `id`, `username` (unique), `password_hash`,
-      `full_name`, `role_id` (FK), `is_active` + audit. NEVER store plaintext.
-- [ ] Register both; `create_db.py` creates the tables and seeds the 4 roles
-      with their permission sets (Administrator=all; Accountant=Accounts/
-      Purchases/Sales/Reports; Inventory Manager=Inventory/Purchases/Stock
-      Reports; Sales User=Sales/Customers/Sales Reports) — idempotent, like
-      `ensure_system_accounts`.
-- [ ] `services/auth_service.py` — `AuthService`: `create_user(...)` (hashes via
-      `passlib`/bcrypt), `authenticate(username, password) -> User | None`,
-      `has_permission(user, module_key) -> bool`. Seed a default admin on first
-      run (force password change later).
-- [ ] **Test it:** `check_milestone26.py` — create a user, authenticate with the
-      right/wrong password (only the right one succeeds), confirm the stored hash
-      is not the plaintext, and assert each role's `has_permission` matches its
-      allowed modules.
+- [x] `models/role.py` — `Role`: name (unique), `permissions` as a JSON-string
+      `Text` column + audit. `models/user.py` — `User`: username (unique),
+      `password_hash` (NO plaintext `password` column exists), full_name,
+      role_id FK, is_active, `must_change_password`, last_login + audit.
+- [x] `services/permissions.py` — module keys + the 4 role permission sets in
+      ONE place (Administrator=all; Accountant=accounts/purchases/purchase_log/
+      billing/sales_log/gst/documents; Inventory Manager=items/purchases/
+      purchase_log/documents; Sales User=billing/sales_log/items). `create_db.py`
+      seeds roles + a default admin via `ensure_roles_and_admin` (idempotent,
+      like `ensure_system_accounts`).
+- [x] `services/auth_service.py` — `AuthService` (bcrypt via passlib,
+      `bcrypt==4.0.1` PINNED): hash_password, create_user (validates duplicate +
+      min-8 password), authenticate (timing-safe `verify()`, returns None
+      identically for unknown-user/wrong-password), change_password,
+      admin_reset_password, has_permission, list_users, deactivate_user. Never
+      logs a password/hash. Default admin `admin`/`Admin@1234`,
+      `must_change_password=True`, seeded only on an empty users table.
+- [x] **Tested — `check_milestone26.py` PASS on SQL Server AND SQLite:** all 11
+      assertions (idempotency, default admin + flag, hash != plaintext,
+      authenticate success/failure/unknown, create_user validation,
+      change_password, per-role has_permission).
 
 ---
 
-## Milestone 27 — Login + Role-Based Access Control (UI + wiring)
+## Milestone 27 — Login + Role-Based Access Control (UI + wiring)  ✅ DONE (2026-07-30)
 
-- [ ] `ui/login.py` — a login dialog shown before `MainWindow`; on success it
-      holds the current `User` in an app-level session/context object.
-- [ ] Wire `created_by` / `modified_by` on every save to the logged-in user's
-      username (services currently take a free `created_by` string / None) —
-      pass the current user through the UI -> service calls.
-- [ ] Enforce RBAC in `main.py`: build only the tabs the user's role permits
-      (Administrator sees all; others per their permission set), or disable them.
-      A non-admin must not reach a screen their role excludes.
-- [ ] **Test it:** `check_milestone27.py` (headless, like M23) — log in as each
-      seeded role and assert the visible tab set matches the role; create an
-      invoice while logged in and assert its `created_by` is that user.
+- [x] `services/session_context.py` holds the current `User` for the process
+      (`get_username()` → "system" when logged out). `ui/login.py` (masked
+      password, generic "Invalid username or password", 5-attempt/30s lockout,
+      Enter submits) + `ui/change_password.py` (forced + non-cancellable when
+      `must_change_password`). `main.py` startup: bootstrap → login → forced
+      change → MainWindow, with an **Account → Logout** that returns to login
+      without restarting (login/exec loop).
+- [x] RBAC in `main.py`: only permitted tabs are **built** (a disallowed screen
+      is never constructed — not hidden/disabled). Title shows `name (role)`.
+      `ui/user_management.py` (Administrator-only "Users" tab; add / reset-
+      password / deactivate; never shows a hash).
+- [x] `created_by`/`modified_by` wired to `SessionContext.get_username()` at
+      every saving UI call site (billing, purchase incl. edit + inline item/
+      supplier, items, banking, OCR doc save). Service signatures unchanged.
+- [x] **Tested — `check_milestone27.py` PASS on SQL Server AND SQLite:** per-role
+      permitted-module sets, created_by wiring stores the logged-in user,
+      SessionContext default "system", admin_reset_password forces a change. RBAC
+      tab construction per role also verified with an offscreen MainWindow smoke
+      test (deleted after passing).
+- [ ] **Manual UI checklist (needs a screen — do before deploy):** login shows
+      before main window; wrong password → generic error; first admin login
+      forces an uncancellable password change; new password works / old fails;
+      a Sales User sees only Items/Billing/Sales Log; Logout returns to login.
 
 ---
 
