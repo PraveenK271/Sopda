@@ -132,30 +132,54 @@ is **ODBC Driver 17** (not 18); the `.env` URL uses Driver 17 accordingly. The
       on SQL Server AND on SQLite**, identical numbers (stock 100→90→85, journals
       balanced). `check_b2c_state.py` from the plan doesn't exist; the intra/
       inter-state GST split it referred to is covered inside M3.
-      NOTE: `check_milestone2.py` fails on BOTH backends with
-      `KeyError: 'current_stock'` — a **pre-existing stale-check bug** (the script
-      reads a `current_stock` key that `ItemService.list_items()` doesn't return),
-      unrelated to the DB switch. Flagged for a later cleanup, not part of M24.
+      NOTE: `check_milestone2.py` failed on BOTH backends with
+      `KeyError: 'current_stock'` — a **pre-existing stale-check bug**, unrelated
+      to the DB switch. **Cleaned up after M24** (commit `d3e497e`):
+      `ItemService.list_items()` now returns `current_stock` (derived in one
+      grouped query; the Items page dropped its per-row N+1), and the check was
+      rewritten to use a unique per-run item code — its old fixed-code
+      `session.delete()` hard-delete both broke the soft-delete rule and, on SQL
+      Server, cascaded a NULL into non-nullable `sales_invoice_items.item_id`.
+      PASS on both backends.
 
 ---
 
-## Milestone 25 — Company profile, Settings & Backup/Restore
+## Milestone 25 — Company profile, Settings & Backup/Restore  ✅ DONE (2026-07-30)
 
-- [ ] `models/company_profile.py` — a single-row `CompanyProfile` (name, address,
-      GSTIN, state, bank details, logo path) replacing the hardcoded
-      `reports/company_info.py` placeholder; `SettingsService` to read/update it.
-- [ ] `ui/settings.py` — a "Settings" screen (top-level tab, matches the spec
-      nav) to edit the company profile; PDF/report code reads from the DB
-      instead of the module constants.
-- [ ] **Backup / Restore** (spec Module 1 + Non-Functional "daily backups"):
-      a `BackupService` — for MSSQL, trigger a `BACKUP DATABASE`/restore (or
-      document SQL Server Agent daily jobs); for SQLite dev, copy the file.
-      A "Backup now" button in Settings + guidance for scheduling daily backups.
+- [x] `models/company_profile.py` — a single-row `CompanyProfile` (name, address,
+      mobile, GSTIN, state, bank details, terms, logo path) replacing the
+      hardcoded `reports/company_info.py` placeholder. `services/settings_service.py`
+      (`SettingsService`) reads/updates it and returns a plain dict; `ensure_profile()`
+      seeds the single row from the old `company_info` constants on first run
+      (idempotent, wired into `initialize_database` next to `ensure_system_accounts`).
+      `company_info.py` is kept as the **seed defaults only** (no longer read at
+      print time).
+- [x] `ui/settings.py` — a top-level **"Settings"** tab to edit the company
+      profile (+ logo browse, terms one-per-line). `reports/invoice_pdf.py` now
+      reads all seller/bank/terms values from `SettingsService.get_profile()`
+      (escaped), not the module constants; `services/ocr_service.py` reads *our*
+      GSTIN from the profile too.
+- [x] **Backup** (spec Module 1 + "daily backups"): `services/backup_service.py`
+      (`BackupService`). SQLite → copies the live DB file (from the engine URL, so
+      a `GEMINI_DB_URL` override is honoured) to a timestamped `.db` under
+      `gemini_erp/backups/`. SQL Server → `BACKUP DATABASE ... WITH INIT, FORMAT`
+      to the instance's default backup dir (server-writable), driven on a **raw
+      pyodbc cursor** with autocommit and full result-set consumption (going
+      through SQLAlchemy's execution layer silently no-ops BACKUP), then
+      **`RESTORE VERIFYONLY`** to confirm a valid set was written (the `.bak` lives
+      in a server-side ACL'd folder the client can't stat). A **"Backup Now"**
+      button in Settings + on-screen guidance to schedule daily backups (Task
+      Scheduler for SQLite / SQL Server Agent job for MSSQL — see README). No
+      COMPRESSION (unsupported on Express). Restore is documented, not automated
+      (needs exclusive DB access — do via SSMS/SQL Agent).
 - [ ] (Optional, spec Module 1) Financial-year management + locking of closed
-      years — can be split to its own milestone if it grows.
-- [ ] **Test it:** update the company profile in Settings -> generate a sales
-      invoice PDF (Milestone 4 path) and confirm it uses the new details; run a
-      backup and confirm the artifact is produced.
+      years — deferred; can be its own milestone if it grows.
+- [x] **Tested — `check_milestone25.py`, PASS on SQL Server AND SQLite:** set
+      unique markers in the company profile, render an invoice PDF (compression
+      off) and assert every marker (name/GSTIN/bank/term) appears in it —
+      proving the PDF reads the DB profile; then run a backup and confirm the
+      artifact (SQLite: file exists; MSSQL: `RESTORE VERIFYONLY` passes). The
+      check restores the original profile afterward. No business logic changed.
 
 ---
 

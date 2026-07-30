@@ -1,5 +1,6 @@
 from models.bank_account import BankAccount
 from models.bank_statement_line import BankStatementLine
+from models.company_profile import CompanyProfile
 from models.customer import Customer
 from models.document import Document
 from models.item import Item
@@ -18,6 +19,7 @@ from models.supplier import Supplier
 __all__ = [
     "BankAccount",
     "BankStatementLine",
+    "CompanyProfile",
     "Customer",
     "Document",
     "Item",

@@ -9,6 +9,8 @@ __pycache__/
 gemini_erp/output/
 gemini_erp/documents/
 gemini_erp/logs/
+gemini_erp/backups/
+*.bak
 logs/
 Samples_TestOCR/
 build/

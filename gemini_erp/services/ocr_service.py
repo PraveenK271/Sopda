@@ -25,7 +25,7 @@ import sys
 from pathlib import Path
 
 from database import get_app_root
-from reports.company_info import COMPANY_GSTIN
+from services.settings_service import SettingsService
 
 logger = logging.getLogger(__name__)
 
@@ -293,10 +293,12 @@ class OCRService:
         result["raw_text"] = raw_text
         lines = [ln.strip() for ln in raw_text.splitlines() if ln.strip()]
 
-        # Supplier GSTIN: first valid GSTIN that is not our own.
+        # Supplier GSTIN: first valid GSTIN that is not our own. Our GSTIN comes
+        # from the editable company profile (Settings), not a hardcoded constant.
+        our_gstin = (SettingsService().get_profile()["gstin"] or "").upper()
         supplier_gstin = None
         for gstin in _GSTIN_RE.findall(raw_text.upper()):
-            if gstin != COMPANY_GSTIN.upper():
+            if gstin != our_gstin:
                 supplier_gstin = gstin
                 break
         result["supplier_gstin"] = supplier_gstin

@@ -9,6 +9,7 @@ from database import Base, DATABASE_PATH, DATABASE_URL, SessionLocal, engine
 from models import (  # noqa: F401
     BankAccount,
     BankStatementLine,
+    CompanyProfile,
     Customer,
     Document,
     Item,
@@ -25,6 +26,7 @@ from models import (  # noqa: F401
     Supplier,
 )
 from services.chart_of_accounts import ensure_system_accounts
+from services.settings_service import ensure_profile
 
 
 def _migrate_add_column(table: str, column: str, ddl_type: str) -> None:
@@ -63,6 +65,7 @@ def initialize_database() -> None:
     session = SessionLocal()
     try:
         ensure_system_accounts(session)
+        ensure_profile(session)
     finally:
         session.close()
 
@@ -81,6 +84,7 @@ def main():
         print(f"SQLite file: {DATABASE_PATH}")
     print("Tables:", ", ".join(Base.metadata.tables.keys()))
     print("System ledger accounts ensured")
+    print("Company profile ensured")
 
 
 if __name__ == "__main__":

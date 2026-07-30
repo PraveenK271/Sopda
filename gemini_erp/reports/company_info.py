@@ -1,7 +1,10 @@
-"""Seller (our company) details printed on invoices.
+"""Default seller (our company) details — seed values only (Phase 4+).
 
-Phase 1 placeholder - edit these values to match the real business.
-A settings screen can replace this file in a later phase.
+These are no longer read at print time. The live company profile lives in the
+``company_profile`` database table and is edited on the Settings screen
+(``SettingsService``); invoices/reports read it from there. On the very first
+run these constants seed that single row, so a fresh install still prints
+something sensible. Edit the real values in Settings, not here.
 """
 
 COMPANY_NAME = "Your Company Name"

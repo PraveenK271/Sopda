@@ -18,18 +18,7 @@ from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, Tabl
 from database import get_session
 from models import SalesInvoice
 from reports.amount_in_words import amount_to_words
-from reports.company_info import (
-    BANK_ACCOUNT_NO,
-    BANK_BRANCH,
-    BANK_IFSC,
-    BANK_NAME,
-    COMPANY_ADDRESS,
-    COMPANY_GSTIN,
-    COMPANY_MOBILE,
-    COMPANY_NAME,
-    COMPANY_STATE,
-    TERMS_AND_CONDITIONS,
-)
+from services.settings_service import SettingsService
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +32,9 @@ def generate_invoice_pdf(invoice_id: int, output_path: str) -> str:
             raise ValueError(f"Invoice {invoice_id} not found")
 
         customer = invoice.customer
+        # Seller details now come from the editable company profile (Settings),
+        # not hardcoded constants. Read once as a plain dict.
+        company = SettingsService().get_profile()
         styles = getSampleStyleSheet()
         center = ParagraphStyle("Center", parent=styles["Normal"], alignment=TA_CENTER)
         company_name_style = ParagraphStyle(
@@ -61,11 +53,15 @@ def generate_invoice_pdf(invoice_id: int, output_path: str) -> str:
         elements = []
 
         # Seller header
-        elements.append(Paragraph(COMPANY_NAME, company_name_style))
-        elements.append(Paragraph(COMPANY_ADDRESS, center))
-        elements.append(Paragraph(f"Mobile: {COMPANY_MOBILE}", center))
+        elements.append(Paragraph(escape(company["name"] or ""), company_name_style))
+        elements.append(Paragraph(escape(company["address"] or ""), center))
+        elements.append(Paragraph(f"Mobile: {escape(company['mobile'] or '')}", center))
         elements.append(
-            Paragraph(f"GSTIN: {COMPANY_GSTIN} | State: {COMPANY_STATE}", center)
+            Paragraph(
+                f"GSTIN: {escape(company['gstin'] or '')} | "
+                f"State: {escape(company['state'] or '')}",
+                center,
+            )
         )
         elements.append(Spacer(1, 6 * mm))
         elements.append(Paragraph("TAX INVOICE", title_style))
@@ -160,10 +156,10 @@ def generate_invoice_pdf(invoice_id: int, output_path: str) -> str:
         amount_words_text = (
             f"<b>Amount in Words:</b><br/>{amount_to_words(invoice.total)}<br/><br/>"
             f"<b>Bank Details</b><br/>"
-            f"Name: {BANK_NAME}<br/>"
-            f"A/c No: {BANK_ACCOUNT_NO}<br/>"
-            f"IFSC: {BANK_IFSC}<br/>"
-            f"Branch: {BANK_BRANCH}"
+            f"Name: {escape(company['bank_name'] or '')}<br/>"
+            f"A/c No: {escape(company['bank_account_no'] or '')}<br/>"
+            f"IFSC: {escape(company['bank_ifsc'] or '')}<br/>"
+            f"Branch: {escape(company['bank_branch'] or '')}"
         )
         amount_words_para = Paragraph(amount_words_text, small)
 
@@ -181,11 +177,14 @@ def generate_invoice_pdf(invoice_id: int, output_path: str) -> str:
 
         # Terms & conditions (left) and signature area (right)
         terms_items = "<br/>".join(
-            f"{idx}. {term}" for idx, term in enumerate(TERMS_AND_CONDITIONS, start=1)
+            f"{idx}. {escape(term)}" for idx, term in enumerate(company["terms"], start=1)
         )
         terms_para = Paragraph(f"<b>Terms &amp; Conditions</b><br/>{terms_items}", small)
 
-        signature_text = f"For {COMPANY_NAME}<br/><br/><br/><br/>Authorised Signatory"
+        signature_text = (
+            f"For {escape(company['name'] or '')}"
+            "<br/><br/><br/><br/>Authorised Signatory"
+        )
         signature_para = Paragraph(signature_text, right)
 
         footer_table = Table([[terms_para, signature_para]], colWidths=[110 * mm, 70 * mm])

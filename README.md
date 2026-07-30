@@ -54,6 +54,31 @@ Requirements:
 - `gemini_erp/reset_dev_db.py` drops and recreates every table on the current
   backend (use after a schema change). **Destructive — development only.**
 
+### Company profile & backups (Settings — Phase 4)
+
+The seller details, bank details and invoice terms printed on invoices/reports
+live in the **`company_profile`** table and are edited on the app's **Settings**
+tab (`SettingsService`). On first run the row is seeded from the defaults in
+`reports/company_info.py` (kept only as seed values now — edit the real details
+in Settings, not in code).
+
+**Backup Now** (Settings) creates a database backup:
+
+- **SQLite:** a timestamped copy of the DB file under `gemini_erp/backups/`.
+- **SQL Server:** `BACKUP DATABASE` to the instance's default backup directory
+  (written by the SQL Server service on the server machine), verified with
+  `RESTORE VERIFYONLY`.
+
+For **daily backups**, schedule it:
+
+- SQLite — a Windows **Task Scheduler** job copying `gemini_erp.db` (or running a
+  small script that calls `BackupService`).
+- SQL Server — a **SQL Server Agent job** running `BACKUP DATABASE` on a
+  schedule (Express has no Agent; use Task Scheduler + `sqlcmd`, or upgrade).
+
+Restore is intentionally manual: close the app and copy a SQLite backup back, or
+restore a `.bak` from SSMS (needs exclusive database access).
+
 ## OCR setup (Phase 3 — separate Python 3.13 venv)
 
 PaddlePaddle (PaddleOCR's backend) has no wheels for Python 3.14, so OCR runs

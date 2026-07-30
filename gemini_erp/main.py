@@ -22,6 +22,7 @@ from ui.profit_and_loss import ProfitAndLossScreen
 from ui.purchase import PurchaseScreen
 from ui.purchase_log import PurchaseLogScreen
 from ui.sales_log import SalesLogScreen
+from ui.settings import SettingsScreen
 from ui.trial_balance import TrialBalanceScreen
 
 
@@ -47,6 +48,7 @@ class MainWindow(QMainWindow):
         self.gst_returns_screen = GstReturnsScreen()
         self.ocr_purchase_screen = OCRPurchaseScreen()
         self.document_history_screen = DocumentHistoryScreen()
+        self.settings_screen = SettingsScreen()
 
         accounts_tabs = QTabWidget()
         accounts_tabs.addTab(self.day_book_screen, "Day Book")
@@ -74,6 +76,7 @@ class MainWindow(QMainWindow):
         tabs.addTab(self.banking_screen, "Banking")
         tabs.addTab(gst_tabs, "GST")
         tabs.addTab(documents_tabs, "Documents")
+        tabs.addTab(self.settings_screen, "Settings")
         tabs.currentChanged.connect(self.on_tab_changed)
         self.tabs = tabs
         self.setCentralWidget(tabs)
@@ -98,6 +101,7 @@ class MainWindow(QMainWindow):
         self.gst_returns_screen.refresh()
         self.ocr_purchase_screen.refresh_lookups()
         self.document_history_screen.refresh()
+        self.settings_screen.refresh()
 
 
 def _configure_logging() -> None:
