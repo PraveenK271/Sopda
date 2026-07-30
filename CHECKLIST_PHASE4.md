@@ -56,12 +56,17 @@ the affected milestone until the choice is locked.
    - Direct internet-exposed SQL Server — do NOT do this (attack surface); if
      internet remote is required, it should go through a VPN or the future API.
 
-5. **Mobile app shape (blocks M29) — biggest effort, plan separately.**
-   - The desktop app is PySide6 (not web), so a mobile app needs a **new REST
-     API layer** over the existing services. Recommended: **a read-first PWA /
-     companion (dashboards, outstanding, stock, approve-a-scan) backed by a
-     FastAPI service reusing the current SQLAlchemy models** — not a full
-     data-entry rewrite. Decide scope + tech before planning M29 in detail.
+5. **Mobile app shape (blocks M29). — LOCKED (2026-07-30).**
+   - **[CHOSEN] Read-first PWA over a new FastAPI service that reuses the existing
+     `services/` + SQLAlchemy models. Backend-first sequencing (API then PWA).**
+     Client = PWA (one codebase, installable, no app store). Scope = read-only
+     first (dashboards, outstanding, stock/reorder, recent invoices, GSTR-3B);
+     approve-a-scan is a possible fast-follow (M29c). Auth = JWT issued after
+     `AuthService.authenticate`, same RBAC via `has_permission`. The API is the
+     ONLY thing that touches the DB; phones reach it over VPN (M28 rule); PWA
+     needs HTTPS (self-signed/mkcert on LAN, or a TLS reverse proxy).
+   - Rejected: native Flutter/React Native (2-3x effort, no gain for read-first);
+     full mobile data-entry (multiplies write/concurrency/audit surface).
 
 ---
 
@@ -270,21 +275,52 @@ friendly clash message), NOT auto-generated.
 
 ---
 
-## Milestone 29 — Mobile companion app (separate track — plan in detail later)
+## Milestone 29 — Mobile companion app (read-first PWA over FastAPI)
 
-*Biggest, most separable effort. Needs Decision 5 locked first. This milestone is
-a placeholder to be expanded into its own checklist when the time comes.*
+Decision 5 LOCKED: **read-first PWA, FastAPI + JWT, backend-first.** Split into
+sub-milestones so each is testable on its own. The API is the only thing that
+touches the DB; it also becomes the future secure remote-access layer.
 
-- [ ] Stand up a **REST API** (recommended: FastAPI) that reuses the existing
-      `services/` + SQLAlchemy models — the desktop app is PySide6, so the mobile
-      app cannot talk to the DB directly; an API is the bridge (and doubles as
-      the secure remote-access layer).
-- [ ] Reuse `AuthService` for API login (token/JWT); enforce the same RBAC.
-- [ ] Build the mobile client (PWA or Flutter/React Native per Decision 5),
-      read-first: dashboards, outstanding, stock levels, reorder alerts, and
-      optionally approve a scanned bill.
-- [ ] **Test it:** API endpoints return the same numbers as the desktop reports
-      for the same data; the mobile client shows them; auth/RBAC enforced.
+### M29a — FastAPI read API (backend first)
+- [ ] Deps in a NEW `requirements-api.txt` (keep the desktop build lean):
+      `fastapi`, `uvicorn[standard]`, a JWT lib (`PyJWT`), `httpx` (tests).
+      Verify Python 3.14 compatibility at install (as done for pyodbc/passlib).
+- [ ] New `api/` package reusing the existing services (NO logic duplication):
+      `api/main.py` (app + CORS for the PWA origin), `api/config.py`
+      (`GEMINI_JWT_SECRET` + token TTL from env), `api/auth.py` (login endpoint,
+      JWT create/verify, `get_current_user` + `require_permission(module_key)`
+      dependencies), `api/routers/` (dashboard, outstanding, stock, invoices,
+      gst). Session-per-request; endpoints call the dict-returning service
+      methods.
+- [ ] Auth: `POST /api/auth/login` -> `AuthService.authenticate` -> JWT
+      (`sub`=user id, role, username, exp). Same generic error as the desktop;
+      simple login rate-limit mirroring the 5-attempt/30s lockout. RBAC enforced
+      per endpoint via `AuthService.has_permission` (403 otherwise).
+- [ ] Read endpoints mapped to existing services + their permission module:
+      `GET /api/me`; `GET /api/dashboard` (today's sales, total receivable/
+      payable, low-stock count); `GET /api/outstanding/customers|suppliers`
+      (module `accounts`); `GET /api/stock` + reorder alerts (module `items`);
+      `GET /api/invoices/recent` (module `sales_log`); `GET /api/gst/gstr3b`
+      (module `gst`).
+- [ ] **Test it:** `check_milestone29.py` (FastAPI `TestClient`/httpx, headless):
+      login success/failure (401, same generic message), 401 without a token,
+      RBAC (a Sales User token gets 200 on `/stock` + `/invoices/recent` but 403
+      on `/outstanding` + `/gst/gstr3b`), and endpoint numbers MATCH the desktop
+      service output for the same fixtures. Document `uvicorn api.main:app` +
+      `GEMINI_JWT_SECRET` in README.
+
+### M29b — PWA client
+- [ ] Installable PWA (manifest + service worker, offline app shell): login
+      (stores the JWT), then read-first screens — dashboard, outstanding,
+      stock/reorder, recent invoices, GSTR-3B — calling the M29a API.
+- [ ] Serve over HTTPS (localhost is a secure context for dev; LAN via
+      self-signed/mkcert or a TLS reverse proxy). Phones reach it over VPN.
+- [ ] **Test it:** load on a phone over the LAN/VPN, log in as each role, confirm
+      only permitted data appears and the numbers match the desktop.
+
+### M29c — Approve-a-scanned-bill (optional fast-follow, the one write)
+- [ ] `POST /api/documents/{id}/approve` reusing the purchase/document save path;
+      the single write action for a manager on the go. Deferred until M29a/b land.
 
 ---
 
