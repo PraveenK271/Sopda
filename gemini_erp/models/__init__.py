@@ -9,6 +9,7 @@ from models.journal_entry import JournalEntry
 from models.journal_entry_line import JournalEntryLine
 from models.ledger_account import LedgerAccount
 from models.payment import Payment
+from models.period_lock import PeriodLock
 from models.purchase_invoice import PurchaseInvoice
 from models.purchase_invoice_item import PurchaseInvoiceItem
 from models.receipt import Receipt
@@ -31,6 +32,7 @@ __all__ = [
     "JournalEntryLine",
     "LedgerAccount",
     "Payment",
+    "PeriodLock",
     "PurchaseInvoice",
     "PurchaseInvoiceItem",
     "Receipt",

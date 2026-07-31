@@ -15,6 +15,7 @@ from database import get_session
 from models import Customer, Item, SalesInvoice, SalesInvoiceItem, StockTransaction
 from services.accounting_service import AccountingService
 from services.gst_service import split_gst
+from services.period_lock_service import PeriodLockService
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +34,7 @@ class SalesService:
         """lines: list of {"item_id": int, "quantity": Decimal-like, "rate": Decimal-like}."""
         if not lines:
             raise ValueError("An invoice must have at least one line item")
+        PeriodLockService().check_not_locked(invoice_date)
 
         session = get_session()
         try:

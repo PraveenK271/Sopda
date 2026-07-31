@@ -18,6 +18,7 @@ from database import get_session
 from models import BankAccount, BankStatementLine, LedgerAccount, Payment, Receipt
 from services.accounting_service import AccountingService
 from services.chart_of_accounts import CASH
+from services.period_lock_service import PeriodLockService
 
 logger = logging.getLogger(__name__)
 
@@ -152,6 +153,7 @@ class BankingService:
         amount_dec = Decimal(str(amount))
         if amount_dec <= 0:
             raise ValueError("Receipt amount must be positive")
+        PeriodLockService().check_not_locked(date)
 
         session = get_session()
         try:
@@ -243,6 +245,7 @@ class BankingService:
         amount_dec = Decimal(str(amount))
         if amount_dec <= 0:
             raise ValueError("Payment amount must be positive")
+        PeriodLockService().check_not_locked(date)
 
         session = get_session()
         try:

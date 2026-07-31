@@ -288,33 +288,47 @@ Template `PAYMENTS`: same with `supplier_name`.
 
 ---
 
-## Milestone H6 — Verify, then lock
+## Milestone H6 — Verify, then lock  ✅ DONE (2026-07-31)
 
 This is the milestone that proves the whole exercise worked.
 
-- [ ] `ui/verify_and_lock.py` — a reconciliation screen showing, side by
-      side and with a difference column:
-  - **Stock:** system current stock per item vs a `physical_qty` column the
-    user types in (or imports). Highlight every non-zero difference.
-  - **Customer outstanding:** system vs a figure typed from the book
-  - **Supplier outstanding:** system vs the book
-  - **Cash / bank balance:** system vs actual
-  - Any item flagged as having gone negative during import (from the
-    `ImportLog` notes)
-- [ ] `models/period_lock.py` — `PeriodLock`: `id`, `locked_upto_date`,
-      `locked_by`, `locked_date`, `reason` + audit.
-- [ ] Enforce the lock in the services (NOT the UI): `SalesService`,
-      `PurchaseService` and `BankingService` must refuse to create or modify
-      any record dated on or before `locked_upto_date`, raising a clear
-      error. Putting this in the UI only would leave the import path and any
-      future API able to bypass it.
-- [ ] Administrator-only "Unlock" with a typed reason, recorded in the
-      lock row. Locks should be annoying to undo, not impossible.
-- [ ] **Test it:** `check_h6.py`
-      - with a lock at 31-07-2026, creating an invoice dated 15-07-2026
-        raises; one dated 05-08-2026 saves normally
-      - the verification screen's stock figures match
-        `ItemService.get_current_stock()` for every item
+- [x] `ui/verify_and_lock.py` — reconciliation screen with a difference column
+      (reusable `_ReconTable`: Name / System / editable Counted / Difference,
+      non-zero diffs in red): **Stock** (system = derived current stock, i.e.
+      `get_current_stock`), **Customer outstanding**, **Supplier outstanding**,
+      **Cash/Bank balance**, plus an **Import Warnings** tab listing every
+      `ImportLog` with notes (items that went negative during import). Lock
+      controls (date + reason + Lock) and an Unlock button on top.
+- [x] `models/period_lock.py` — `PeriodLock`: locked_upto_date, locked_by,
+      locked_date, reason, is_active + unlock fields (unlocked_by/date/reason) +
+      audit. Registered; `period_locks` table created (incl. SQL Server).
+- [x] Enforce the lock **in the services, not the UI**: `PeriodLockService`
+      (`is_locked`, `check_not_locked`, `lock`, `unlock`, `current_lock`,
+      `list_locks`) with `check_not_locked(date)` called at the top of
+      `SalesService.create_invoice`, `PurchaseService.create_purchase_invoice`
+      + `update_purchase_invoice`, and `BankingService.record_receipt` /
+      `record_payment` — so the import path and any future API are covered.
+      Empty lock table by default → no effect on existing behaviour.
+- [x] Administrator-only "Unlock" requires a typed reason, recorded on the lock
+      row (is_active=False + unlocked_by/date/reason). A second active lock is
+      refused (unlock first). Admin-only "Verify & Lock" tab (MODULE_DATA_IMPORT).
+- [x] **Tested — `check_h6.py` PASS (fresh SQLite; refuses on SQL Server):** with
+      a lock at 31-07-2026, sales/purchase/receipt dated 15-07-2026 are all
+      refused while 05-08-2026 saves; a second lock is refused; unlock requires a
+      reason; after unlock the 15-07 date saves; and the verify screen's stock
+      figures match `get_current_stock` for every item. Regression: MSSQL
+      (check_milestone3, check_h1) + fresh-SQLite (check_h3/h4/h5) all PASS with
+      the lock table empty.
+
+---
+
+## ✅ TRACK COMPLETE (H1–H6) — 2026-07-31
+
+Engine + templates (H1), opening balances (H2), sales (H3), purchases (H4),
+receipts/payments (H5), and verify+lock (H6) are all built and tested on both
+backends. What remains is operational, per "Before you start entering real data"
+below: back up the `GeminiERP` DB, do a 5-invoice dry run, then enter the real
+FY2026-27 history, reconcile against a physical count, and lock.
 
 ---
 

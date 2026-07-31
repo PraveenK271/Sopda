@@ -18,6 +18,7 @@ from models import (  # noqa: F401
     JournalEntryLine,
     LedgerAccount,
     Payment,
+    PeriodLock,
     PurchaseInvoice,
     PurchaseInvoiceItem,
     Receipt,

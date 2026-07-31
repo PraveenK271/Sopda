@@ -46,6 +46,7 @@ from ui.sales_log import SalesLogScreen
 from ui.settings import SettingsScreen
 from ui.trial_balance import TrialBalanceScreen
 from ui.user_management import UserManagementScreen
+from ui.verify_and_lock import VerifyAndLockScreen
 
 
 class MainWindow(QMainWindow):
@@ -161,6 +162,10 @@ class MainWindow(QMainWindow):
             self.data_import_screen = DataImportScreen()
             self.tabs.addTab(self.data_import_screen, "Data Import")
             self._refreshers.append(self.data_import_screen.refresh)
+
+            self.verify_lock_screen = VerifyAndLockScreen()
+            self.tabs.addTab(self.verify_lock_screen, "Verify & Lock")
+            self._refreshers.append(self.verify_lock_screen.refresh)
 
     def _build_menu(self):
         account_menu = self.menuBar().addMenu("Account")
