@@ -20,6 +20,7 @@ IGST_OUTPUT = "IGST_OUTPUT"
 CGST_INPUT = "CGST_INPUT"
 SGST_INPUT = "SGST_INPUT"
 IGST_INPUT = "IGST_INPUT"
+OPENING_EQUITY = "OPENING_EQUITY"
 
 # (name, account_type, account_group) for each system account code
 SYSTEM_ACCOUNTS = {
@@ -32,6 +33,8 @@ SYSTEM_ACCOUNTS = {
     CGST_INPUT: ("CGST Input", "ASSET", "Duties & Taxes"),
     SGST_INPUT: ("SGST Input", "ASSET", "Duties & Taxes"),
     IGST_INPUT: ("IGST Input", "ASSET", "Duties & Taxes"),
+    # The balancing figure for the one-time opening-balances journal (H2).
+    OPENING_EQUITY: ("Opening Balance Equity", "EQUITY", "Capital Account"),
 }
 
 

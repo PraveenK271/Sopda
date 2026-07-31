@@ -139,59 +139,48 @@ Purchases before sales so stock does not dip negative mid-import.
 
 ---
 
-## Milestone H2 — Opening balances (as of 31 March 2026)
+## Milestone H2 — Opening balances (as of 31 March 2026)  ✅ DONE (2026-07-31)
 
 > **The single biggest risk in this whole track.** `opening_stock` must be
-> the stock on the CUT-OFF DATE, not today's physical count. Get this wrong
-> and every item is silently wrong.
+> the stock on the CUT-OFF DATE, not today's physical count.
 > Correct: 60 on 31 Mar + 80 bought − 40 sold = 100 today.
 > Wrong: 100 (today's count) + 80 − 40 = 140.
-> Put this warning on the screen itself, not just in the docs.
+> This warning is shown ON the Opening Balances screen (red), per requirement.
 
-- [ ] `services/opening_balance_service.py` — `OpeningBalanceService`:
-  - `set_opening_stock(session, item_id, quantity, created_by)` —
-    sets `items.opening_stock`. Does NOT create a stock_transaction
-    (opening stock is the baseline the formula starts from, not a movement).
-  - `set_party_opening_balance(session, party_type, party_id, amount,
-    balance_type, created_by)` — writes `opening_balance` and
-    `opening_balance_type` on that party's `ledger_account`.
-  - `set_cash_bank_opening(session, ledger_account_id, amount, created_by)`
-  - `post_opening_journal(session, as_of_date, created_by)` — builds ONE
-    balanced journal entry with `reference_type='OPENING'`:
-    ```
-    Dr each customer ledger with a Dr opening balance
-    Dr Cash / Bank ledgers
-       Cr each supplier ledger with a Cr opening balance
-       Cr Opening Balance Equity        (the balancing figure)
-    ```
-    Add `OPENING_EQUITY` to `services/chart_of_accounts.py` as a system
-    account (`account_type='EQUITY'`) and seed it in
-    `ensure_system_accounts()`.
-    Reuse `AccountingService.post_journal_entry()` — it already refuses to
-    save an unbalanced entry. Do not bypass it.
-  - Guard: `post_opening_journal()` must refuse to run twice. If an
-    `OPENING` journal already exists, raise with a clear message telling the
-    user to delete/reverse the existing one first.
+**Double-count trap found & handled:** every balance report already computes
+`opening_balance` FIELD + journal-line totals. Setting the field AND posting a
+journal to the same ledger would double-count (outstanding 100k not 50k). So the
+`set_*` methods STAGE the balances on the `opening_balance` fields, and
+`post_opening_journal()` converts them into the journal and then ZEROES those
+fields — every balance is counted exactly once (via the journal). Verified by
+check_h2 (outstanding = 50,000, not 100,000).
 
-- [ ] Excel templates via H1's generator:
-  - `OPENING_STOCK`: `item_code`, `opening_qty`
-  - `OPENING_BALANCES`: `party_type` (`CUSTOMER`/`SUPPLIER`),
-    `party_name`, `amount`, `balance_type` (`Dr`/`Cr`)
-
-- [ ] `ui/opening_balances.py` — a screen with three sections (opening stock,
-      party balances, cash/bank), each supporting manual entry *and* Excel
-      import; plus a "Post Opening Journal" button that is disabled until
-      balances have been entered. Show the cut-off date (31-03-2026)
-      prominently at the top with the double-count warning.
-
-- [ ] **Test it:** `check_h2.py`
-      - set opening stock 60 on a test item -> `get_current_stock()` returns
-        60 with no stock_transactions rows
-      - set a customer Dr 50,000 and a supplier Cr 30,000, post the opening
-        journal -> the entry balances, and the Trial Balance still shows
-        total debit == total credit
-      - customer outstanding (Milestone 15) now shows 50,000
-      - calling `post_opening_journal()` a second time raises
+- [x] `services/opening_balance_service.py` — `OpeningBalanceService`:
+      `set_opening_stock` (sets `items.opening_stock`, NO stock_transaction),
+      `set_party_opening_balance` (stages on the party ledger), `set_cash_bank_opening`,
+      `post_opening_journal(session, as_of_date, created_by)` — reads the staged
+      balances, posts ONE balanced entry (`reference_type='OPENING'`, Dr/Cr per
+      staged type + `OPENING_EQUITY` balancing) via
+      `AccountingService.post_journal_entry()`, then clears the staged fields.
+      Guard: refuses to run twice (raises if an OPENING journal exists).
+      `OPENING_EQUITY` added to `chart_of_accounts` (EQUITY) + seeded; seeded on
+      SQL Server.
+- [x] Excel templates (via H1): `OPENING_STOCK` (item_code, opening_qty),
+      `OPENING_BALANCES` (party_type, party_name, amount, balance_type).
+      `ImportService.import_opening_stock` / `import_opening_balances` +
+      dispatch; OPENING_BALANCES validation requires the party to already exist
+      (ERROR). Import stages balances only — the journal is posted separately.
+- [x] `ui/opening_balances.py` — three sections (Opening Stock / Party Balances /
+      Cash-Bank), each with manual entry (+ Excel import for stock & party); the
+      cut-off date + double-count warning in red at the top; a "Post Opening
+      Journal" button disabled until staged balances exist. New Administrator-only
+      tab (reuses `MODULE_DATA_IMPORT`).
+- [x] **Tested — `check_h2.py` PASS (fresh SQLite; refuses to run on SQL Server
+      as it posts a global journal):** opening stock 60 -> get_current_stock 60,
+      0 stock_transactions; customer Dr 50k + supplier Cr 30k -> balanced OPENING
+      entry, Trial Balance balances; customer outstanding 50,000 (single-counted);
+      second post raises. Import path + tab RBAC verified offscreen. `OPENING_EQUITY`
+      seeds clean on SQL Server; RBAC (M27/M29) + H1 regressions PASS.
 
 ---
 

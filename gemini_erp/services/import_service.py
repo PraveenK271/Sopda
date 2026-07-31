@@ -20,7 +20,8 @@ from openpyxl.utils import get_column_letter
 
 from sqlalchemy import false
 from database import get_session
-from models import Customer, Item, SalesInvoice, Supplier
+from models import Customer, ImportLog, Item, SalesInvoice, Supplier
+from services.opening_balance_service import OpeningBalanceService
 
 logger = logging.getLogger(__name__)
 
@@ -204,9 +205,31 @@ class ImportService:
                             report.add_error(row_no, f"'{col.name}' is required")
                         continue
                     self._validate_cell(session, report, row_no, col, raw, defn, checked_refs)
+            self._validate_type_specific(session, report, rows, defn)
         finally:
             session.close()
         return report
+
+    def _validate_type_specific(self, session, report, rows, defn):
+        """Rules that depend on more than one cell / on the import type."""
+        if defn.key == "OPENING_BALANCES":
+            # The party must already exist (we cannot open a balance on a party
+            # that has no ledger account).
+            for i, row in enumerate(rows):
+                row_no = i + 2
+                ptype = str(row.get("party_type") or "").strip().upper()
+                pname = str(row.get("party_name") or "").strip()
+                if not pname or ptype not in ("CUSTOMER", "SUPPLIER"):
+                    continue  # already flagged by the per-cell validators
+                model = Customer if ptype == "CUSTOMER" else Supplier
+                found = (
+                    session.query(model.id)
+                    .filter(model.name == pname, model.is_deleted == false())
+                    .first()
+                )
+                if found is None:
+                    report.add_error(row_no, f"{ptype.capitalize()} '{pname}' does not exist")
+        # SALES total cross-check + per-supplier bill_no (PURCHASES) land in H3/H4.
 
     def _validate_cell(self, session, report, row_no, col, raw, defn, checked_refs):
         role = col.role
@@ -350,11 +373,94 @@ class ImportService:
         logger.info("Generated %s template at %s", import_type, save_path)
         return save_path
 
-    # --- import dispatch (per-type methods land in H2-H5) ----------------
+    # --- import dispatch -------------------------------------------------
 
-    def import_data(self, import_type: str, file_path: str, created_by: str | None):
-        """Dispatch to the per-type importer. Implemented milestone by milestone."""
+    def import_data(self, import_type: str, file_path: str, created_by: str | None) -> ImportLog:
+        """Dispatch to the per-type importer (each re-validates first)."""
+        if import_type == "OPENING_STOCK":
+            return self.import_opening_stock(file_path, created_by)
+        if import_type == "OPENING_BALANCES":
+            return self.import_opening_balances(file_path, created_by)
         raise NotImplementedError(
-            f"{import_type} import is added in a later milestone (H2-H5). "
+            f"{import_type} import is added in a later milestone (H3-H5). "
             "Validation and templates are available now."
         )
+
+    def _guard_importable(self, file_path: str, import_type: str) -> list[dict]:
+        """Re-read + re-validate; refuse to import a file with any error."""
+        rows = self.read_sheet(file_path, IMPORT_DEFS[import_type].column_names())
+        report = self.validate(rows, import_type)
+        if not report.is_importable:
+            first = report.errors[0]
+            raise ValueError(
+                f"File has {len(report.errors)} error(s); cannot import. "
+                f"First: row {first['row_number']} — {first['message']}"
+            )
+        return rows
+
+    def import_opening_stock(self, file_path: str, created_by: str | None) -> ImportLog:
+        rows = self._guard_importable(file_path, "OPENING_STOCK")
+        obs = OpeningBalanceService()
+        session = get_session()
+        created = 0
+        try:
+            for row in rows:
+                item = (
+                    session.query(Item)
+                    .filter(Item.code == str(row["item_code"]).strip(), Item.is_deleted == false())
+                    .first()
+                )
+                obs.set_opening_stock(session, item.id, self._parse_number(row["opening_qty"]), created_by)
+                created += 1
+            log = self._write_log(session, "OPENING_STOCK", file_path, len(rows), created, "IMPORTED")
+            return log
+        except Exception as exc:
+            self._write_log(session, "OPENING_STOCK", file_path, len(rows), created, "FAILED", str(exc))
+            raise
+        finally:
+            session.close()
+
+    def import_opening_balances(self, file_path: str, created_by: str | None) -> ImportLog:
+        rows = self._guard_importable(file_path, "OPENING_BALANCES")
+        obs = OpeningBalanceService()
+        session = get_session()
+        created = 0
+        try:
+            for row in rows:
+                ptype = str(row["party_type"]).strip().upper()
+                pname = str(row["party_name"]).strip()
+                model = Customer if ptype == "CUSTOMER" else Supplier
+                party = (
+                    session.query(model).filter(model.name == pname, model.is_deleted == false()).first()
+                )
+                obs.set_party_opening_balance(
+                    session, ptype, party.id, self._parse_number(row["amount"]),
+                    str(row["balance_type"]).strip(), created_by,
+                )
+                created += 1
+            # NOTE: staging only — the user posts the opening journal separately.
+            log = self._write_log(session, "OPENING_BALANCES", file_path, len(rows), created, "IMPORTED")
+            return log
+        except Exception as exc:
+            self._write_log(session, "OPENING_BALANCES", file_path, len(rows), created, "FAILED", str(exc))
+            raise
+        finally:
+            session.close()
+
+    @staticmethod
+    def _write_log(session, import_type, file_path, rows_read, created, status, notes=None) -> ImportLog:
+        import os
+
+        log = ImportLog(
+            file_name=os.path.basename(file_path),
+            import_type=import_type,
+            rows_read=rows_read,
+            records_created=created,
+            status=status,
+            notes=notes,
+        )
+        session.add(log)
+        session.commit()
+        session.refresh(log)
+        session.expunge(log)
+        return log

@@ -37,6 +37,7 @@ from ui.item_master import ItemMasterScreen
 from ui.ledger_view import LedgerViewScreen
 from ui.login import LoginDialog
 from ui.ocr_purchase import DocumentHistoryScreen, OCRPurchaseScreen
+from ui.opening_balances import OpeningBalancesScreen
 from ui.outstanding import OutstandingScreen
 from ui.profit_and_loss import ProfitAndLossScreen
 from ui.purchase import PurchaseScreen
@@ -153,6 +154,10 @@ class MainWindow(QMainWindow):
             self._refreshers.append(self.user_management_screen.refresh)
 
         if self._can(user, MODULE_DATA_IMPORT):
+            self.opening_balances_screen = OpeningBalancesScreen()
+            self.tabs.addTab(self.opening_balances_screen, "Opening Balances")
+            self._refreshers.append(self.opening_balances_screen.refresh)
+
             self.data_import_screen = DataImportScreen()
             self.tabs.addTab(self.data_import_screen, "Data Import")
             self._refreshers.append(self.data_import_screen.refresh)
