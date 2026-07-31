@@ -259,23 +259,32 @@ Template `PURCHASES` columns: `bill_no`, `bill_date`, `supplier_name`,
 
 ---
 
-## Milestone H5 — Receipts & payments import
+## Milestone H5 — Receipts & payments import  ✅ DONE (2026-07-31)
 
 Template `RECEIPTS`: `date`, `customer_name`, `amount`, `mode`
 (`CASH`/`BANK`), `bank_account_name` (required when mode is `BANK`),
 `reference_no`.
 Template `PAYMENTS`: same with `supplier_name`.
 
-- [ ] `ImportService.import_receipts(...)` / `import_payments(...)` calling
-      the existing `BankingService.record_receipt()` / `record_payment()`.
-- [ ] Bank accounts must already exist (Milestone 16) — an unknown
-      `bank_account_name` is an ERROR.
-- [ ] Warn (do not block) if a receipt makes a customer's balance go
-      credit — usually a sign of a missing invoice or a double-entered
-      receipt, worth a look in H6.
-- [ ] **Test it:** `check_h5.py` — import receipts covering the H3 invoices
-      in full; those customers' outstanding drops to zero and the Cash/Bank
-      ledger rises by the total received.
+- [x] `ImportService.import_receipts(...)` / `import_payments(...)` (shared
+      `_import_money_moves`) calling the existing `BankingService.record_receipt()`
+      / `record_payment()` — the party ledger posting and Cash/Bank journal come
+      free. One transaction each, stop-on-fail. No duplicate guard (a receipt can
+      legitimately repeat; a double entry is surfaced by the credit warning).
+- [x] Party and bank account must already exist. Introduced an `auto_create_party`
+      flag on the type def: sales/purchases WARN + auto-create an unknown party;
+      receipts/payments ERROR (must exist). An unknown `bank_account_name` is an
+      ERROR, and it is required only when `mode` is `BANK` (a per-type mode/bank
+      validation).
+- [x] Warn (do not block) if a receipt would push the customer into credit (or a
+      payment the supplier into debit) — amount beyond the current outstanding —
+      flagged as a likely missing invoice / double entry for H6.
+- [x] **Tested — `check_h5.py` PASS (fresh SQLite; refuses on SQL Server):** a
+      full receipt drops the customer's outstanding to zero and raises the bank
+      ledger by the amount; an unknown bank account and an unknown party are both
+      errors; a receipt beyond what's owed is allowed but warns (credit); a
+      payment clears the supplier's outstanding. H1/H3/H4 still PASS after the
+      party-validation change.
 
 ---
 

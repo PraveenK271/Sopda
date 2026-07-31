@@ -22,7 +22,9 @@ from decimal import ROUND_HALF_UP, Decimal
 
 from sqlalchemy import false
 from database import get_session
-from models import Customer, ImportLog, Item, PurchaseInvoice, SalesInvoice, Supplier
+from models import BankAccount, Customer, ImportLog, Item, PurchaseInvoice, SalesInvoice, Supplier
+from services.accounting_service import AccountingService
+from services.banking_service import BankingService
 from services.customer_service import CustomerService
 from services.gst_service import split_gst
 from services.opening_balance_service import OpeningBalanceService
@@ -62,6 +64,9 @@ class ImportTypeDef:
     key: str
     party_kind: str | None       # 'CUSTOMER' | 'SUPPLIER' | None
     columns: list[ColumnSpec]
+    # Sales/purchases create an unknown party (warning); receipts/payments and
+    # opening balances require it to already exist (error).
+    auto_create_party: bool = False
 
     def column_names(self) -> list[str]:
         return [c.name for c in self.columns]
@@ -80,7 +85,7 @@ IMPORT_DEFS: dict[str, ImportTypeDef] = {
         ColumnSpec("quantity", "number", True, "quantity", "Greater than 0.", "10"),
         ColumnSpec("rate", "number", True, "rate", "Per-unit rate, excluding GST.", "100"),
         ColumnSpec("invoice_total", "number", True, "total", "Bill-book total (cross-check); repeat on every row of the invoice.", "1180"),
-    ]),
+    ], auto_create_party=True),
     "PURCHASES": ImportTypeDef("PURCHASES", "SUPPLIER", [
         ColumnSpec("bill_no", "text", True, "unique_ref", "Supplier's bill number; unique per supplier.", "S-100"),
         ColumnSpec("bill_date", "date", True, "date", "DD-MM-YYYY, on/after 01-04-2026.", "05-04-2026"),
@@ -91,7 +96,7 @@ IMPORT_DEFS: dict[str, ImportTypeDef] = {
         ColumnSpec("quantity", "number", True, "quantity", "Greater than 0.", "50"),
         ColumnSpec("rate", "number", True, "rate", "Per-unit rate, excluding GST.", "80"),
         ColumnSpec("bill_total", "number", True, "total", "Bill total (cross-check); repeat on every row of the bill.", "4720"),
-    ]),
+    ], auto_create_party=True),
     "OPENING_STOCK": ImportTypeDef("OPENING_STOCK", None, [
         ColumnSpec("item_code", "text", True, "item_code", "Must already exist in the Item Master.", "ITM-001"),
         ColumnSpec("opening_qty", "number", True, "opening_qty", "Stock quantity ON 31-03-2026 (NOT today's count).", "60"),
@@ -243,6 +248,48 @@ class ImportService:
             self._validate_sales_groups(session, report, rows)
         elif defn.key == "PURCHASES":
             self._validate_purchase_groups(session, report, rows)
+        elif defn.key in ("RECEIPTS", "PAYMENTS"):
+            self._validate_money_moves(session, report, rows, defn)
+
+    def _validate_money_moves(self, session, report, rows, defn):
+        """Receipts/payments: BANK mode needs a bank_account_name that exists;
+        and warn (not block) if the entry would push the party's balance the
+        'wrong' way (a receipt into credit / a payment into debit) — a likely
+        missing invoice or double entry, to review in H6."""
+        party_col = "customer_name" if defn.key == "RECEIPTS" else "supplier_name"
+        if defn.key == "RECEIPTS":
+            balances = {r["name"]: r["outstanding"] for r in AccountingService.get_outstanding_customers()}
+            warn_word = "credit"
+        else:
+            balances = {r["name"]: r["outstanding"] for r in AccountingService.get_outstanding_suppliers()}
+            warn_word = "debit"
+
+        for i, row in enumerate(rows):
+            row_no = i + 2
+            mode = str(row.get("mode") or "").strip().upper()
+            bank_name = str(row.get("bank_account_name") or "").strip()
+            if mode == "BANK":
+                if not bank_name:
+                    report.add_error(row_no, "bank_account_name is required when mode is BANK")
+                else:
+                    exists = (
+                        session.query(BankAccount.id)
+                        .filter(BankAccount.name == bank_name, BankAccount.is_deleted == false())
+                        .first()
+                    )
+                    if exists is None:
+                        report.add_error(row_no, f"Bank account '{bank_name}' does not exist")
+
+            amount = self._parse_number(row.get("amount"))
+            party = str(row.get(party_col) or "").strip()
+            if amount is not None and party:
+                owed = balances.get(party, 0.0)
+                if amount > owed + float(TOTAL_TOLERANCE):
+                    report.add_warning(
+                        row_no,
+                        f"{party}: amount ₹{amount:.2f} exceeds the ₹{owed:.2f} outstanding — "
+                        f"balance would go {warn_word} (possible missing invoice/double entry)",
+                    )
 
     def _validate_sales_groups(self, session, report, rows):
         """Per-invoice checks: one date + one customer per invoice_no, and the
@@ -377,16 +424,19 @@ class ImportService:
             if exists is None:
                 report.add_error(row_no, f"Item code '{text}' does not exist in the Item Master")
         elif role == "party_name":
-            model = Customer if defn.party_kind == "CUSTOMER" else Supplier
             if defn.party_kind:
+                model = Customer if defn.party_kind == "CUSTOMER" else Supplier
                 found = (
                     session.query(model.id)
                     .filter(model.name == text, model.is_deleted == false())
                     .first()
                 )
                 if found is None:
-                    kind = defn.party_kind.lower()
-                    report.add_warning(row_no, f"{kind.capitalize()} '{text}' is unknown; it will be created on import")
+                    kind = defn.party_kind.capitalize()
+                    if defn.auto_create_party:
+                        report.add_warning(row_no, f"{kind} '{text}' is unknown; it will be created on import")
+                    else:
+                        report.add_error(row_no, f"{kind} '{text}' does not exist")
         elif role == "unique_ref":
             if text not in checked_refs:
                 checked_refs.add(text)
@@ -498,10 +548,11 @@ class ImportService:
             return self.import_sales(file_path, created_by)
         if import_type == "PURCHASES":
             return self.import_purchases(file_path, created_by)
-        raise NotImplementedError(
-            f"{import_type} import is added in a later milestone (H5). "
-            "Validation and templates are available now."
-        )
+        if import_type == "RECEIPTS":
+            return self.import_receipts(file_path, created_by)
+        if import_type == "PAYMENTS":
+            return self.import_payments(file_path, created_by)
+        raise NotImplementedError(f"{import_type} import is not available.")
 
     def _guard_importable(self, file_path: str, import_type: str) -> list[dict]:
         """Re-read + re-validate; refuse to import a file with any error."""
@@ -678,6 +729,68 @@ class ImportService:
             self._write_log(
                 session, "PURCHASES", file_path, len(rows), created, "FAILED",
                 f"Stopped at bill '{current}' after {created} imported: {exc}",
+            )
+            raise
+        finally:
+            session.close()
+
+    def import_receipts(self, file_path: str, created_by: str | None) -> ImportLog:
+        return self._import_money_moves(file_path, created_by, "RECEIPTS")
+
+    def import_payments(self, file_path: str, created_by: str | None) -> ImportLog:
+        return self._import_money_moves(file_path, created_by, "PAYMENTS")
+
+    def _import_money_moves(self, file_path: str, created_by: str | None, import_type: str) -> ImportLog:
+        """Import receipts/payments via the existing BankingService — the party
+        ledger posting and the Cash/Bank journal come for free. Party and bank
+        account must already exist (validation guarantees it). One transaction
+        each, stop-on-fail. No duplicate guard: a receipt can legitimately repeat
+        (a double entry is instead surfaced by the credit-balance warning)."""
+        rows = self._guard_importable(file_path, import_type)
+        banking = BankingService()
+        is_receipt = import_type == "RECEIPTS"
+        party_col = "customer_name" if is_receipt else "supplier_name"
+        party_model = Customer if is_receipt else Supplier
+
+        created = 0
+        current = None
+        session = get_session()
+        try:
+            for i, row in enumerate(rows):
+                current = f"row {i + 2}"
+                party = (
+                    session.query(party_model)
+                    .filter(party_model.name == str(row[party_col]).strip(), party_model.is_deleted == false())
+                    .first()
+                )
+                mode = str(row["mode"]).strip().upper()
+                bank_id = None
+                if mode == "BANK":
+                    bank = (
+                        session.query(BankAccount)
+                        .filter(BankAccount.name == str(row["bank_account_name"]).strip(), BankAccount.is_deleted == false())
+                        .first()
+                    )
+                    bank_id = bank.id
+                amount = self._parse_number(row["amount"])
+                when = self._parse_date(row["date"])
+                ref = str(row.get("reference_no") or "").strip() or None
+                if is_receipt:
+                    banking.record_receipt(
+                        date=when, customer_id=party.id, amount=amount, payment_mode=mode,
+                        bank_account_id=bank_id, reference_no=ref, created_by=created_by,
+                    )
+                else:
+                    banking.record_payment(
+                        date=when, supplier_id=party.id, amount=amount, payment_mode=mode,
+                        bank_account_id=bank_id, reference_no=ref, created_by=created_by,
+                    )
+                created += 1
+            return self._write_log(session, import_type, file_path, len(rows), created, "IMPORTED")
+        except Exception as exc:
+            self._write_log(
+                session, import_type, file_path, len(rows), created, "FAILED",
+                f"Stopped at {current} after {created} imported: {exc}",
             )
             raise
         finally:
