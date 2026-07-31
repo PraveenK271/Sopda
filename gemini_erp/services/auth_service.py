@@ -225,12 +225,20 @@ def ensure_roles_and_admin(session: Session) -> None:
     Commits on the passed-in session.
     """
     try:
-        existing_roles = {name for (name,) in session.query(Role.name)}
+        # Role permission sets are code-defined (permissions.py is the single
+        # source of truth). Create missing roles AND reconcile existing ones so
+        # that adding a new module key (e.g. data_import) takes effect on upgrade
+        # without a manual DB edit.
+        existing_roles = {r.name: r for r in session.query(Role).all()}
         for role_name, permissions in ROLE_PERMISSIONS.items():
-            if role_name in existing_roles:
-                continue
-            session.add(Role(name=role_name, permissions=json.dumps(permissions)))
-            logger.info("Created role %s", role_name)
+            desired = json.dumps(permissions)
+            role = existing_roles.get(role_name)
+            if role is None:
+                session.add(Role(name=role_name, permissions=desired))
+                logger.info("Created role %s", role_name)
+            elif role.permissions != desired:
+                role.permissions = desired
+                logger.info("Updated permissions for role %s", role_name)
         session.commit()
 
         user_count = session.query(User).count()

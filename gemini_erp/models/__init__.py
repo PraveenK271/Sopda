@@ -3,6 +3,7 @@ from models.bank_statement_line import BankStatementLine
 from models.company_profile import CompanyProfile
 from models.customer import Customer
 from models.document import Document
+from models.import_log import ImportLog
 from models.item import Item
 from models.journal_entry import JournalEntry
 from models.journal_entry_line import JournalEntryLine
@@ -24,6 +25,7 @@ __all__ = [
     "CompanyProfile",
     "Customer",
     "Document",
+    "ImportLog",
     "Item",
     "JournalEntry",
     "JournalEntryLine",

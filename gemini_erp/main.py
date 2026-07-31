@@ -14,6 +14,7 @@ from services.permissions import (
     MODULE_ACCOUNTS,
     MODULE_BANKING,
     MODULE_BILLING,
+    MODULE_DATA_IMPORT,
     MODULE_DOCUMENTS,
     MODULE_GST,
     MODULE_ITEMS,
@@ -28,6 +29,7 @@ from ui.balance_sheet import BalanceSheetScreen
 from ui.banking import BankingScreen
 from ui.billing import BillingScreen
 from ui.change_password import ChangePasswordDialog
+from ui.data_import import DataImportScreen
 from ui.day_book import DayBookScreen
 from ui.gst_reports import GstReportsScreen
 from ui.gst_returns import GstReturnsScreen
@@ -149,6 +151,11 @@ class MainWindow(QMainWindow):
             self.user_management_screen = UserManagementScreen()
             self.tabs.addTab(self.user_management_screen, "Users")
             self._refreshers.append(self.user_management_screen.refresh)
+
+        if self._can(user, MODULE_DATA_IMPORT):
+            self.data_import_screen = DataImportScreen()
+            self.tabs.addTab(self.data_import_screen, "Data Import")
+            self._refreshers.append(self.data_import_screen.refresh)
 
     def _build_menu(self):
         account_menu = self.menuBar().addMenu("Account")

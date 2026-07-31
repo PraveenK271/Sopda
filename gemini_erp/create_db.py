@@ -12,6 +12,7 @@ from models import (  # noqa: F401
     CompanyProfile,
     Customer,
     Document,
+    ImportLog,
     Item,
     JournalEntry,
     JournalEntryLine,

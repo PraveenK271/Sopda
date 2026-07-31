@@ -20,6 +20,7 @@ MODULE_GST = "gst"
 MODULE_DOCUMENTS = "documents"
 MODULE_SETTINGS = "settings"
 MODULE_USERS = "users"  # user-management screen
+MODULE_DATA_IMPORT = "data_import"  # historical bulk-import screen (Administrator only)
 
 ALL_MODULES = [
     MODULE_ITEMS,
@@ -33,6 +34,7 @@ ALL_MODULES = [
     MODULE_DOCUMENTS,
     MODULE_SETTINGS,
     MODULE_USERS,
+    MODULE_DATA_IMPORT,
 ]
 
 # Role names (kept as constants so the seed and any lookups agree).
