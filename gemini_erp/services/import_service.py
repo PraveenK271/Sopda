@@ -18,12 +18,20 @@ from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font, PatternFill
 from openpyxl.utils import get_column_letter
 
+from decimal import ROUND_HALF_UP, Decimal
+
 from sqlalchemy import false
 from database import get_session
 from models import Customer, ImportLog, Item, SalesInvoice, Supplier
+from services.customer_service import CustomerService
+from services.gst_service import split_gst
 from services.opening_balance_service import OpeningBalanceService
+from services.sales_service import SalesService
 
 logger = logging.getLogger(__name__)
+
+DEFAULT_STATE = "Andhra Pradesh"  # B2C default when customer_state is blank
+TOTAL_TOLERANCE = Decimal("1")    # rupees of rounding slack on the total cross-check
 
 # The historical cut-off: transactions on/after this date are entered
 # individually; everything before is collapsed into opening balances (H2).
@@ -229,7 +237,74 @@ class ImportService:
                 )
                 if found is None:
                     report.add_error(row_no, f"{ptype.capitalize()} '{pname}' does not exist")
-        # SALES total cross-check + per-supplier bill_no (PURCHASES) land in H3/H4.
+        elif defn.key == "SALES":
+            self._validate_sales_groups(session, report, rows)
+        # Per-supplier bill_no (PURCHASES) lands in H4.
+
+    def _validate_sales_groups(self, session, report, rows):
+        """Per-invoice checks: one date + one customer per invoice_no, and the
+        computed total (taxable + GST) matches the bill-book invoice_total (±₹1).
+        Skips a group that already has a blocking per-cell error so the messages
+        stay focused."""
+        groups: dict[str, list] = {}
+        for i, row in enumerate(rows):
+            inv = str(row.get("invoice_no") or "").strip()
+            if inv:
+                groups.setdefault(inv, []).append((i + 2, row))
+
+        for inv, entries in groups.items():
+            first_row_no = entries[0][0]
+            dates = {str(r.get("invoice_date") or "").strip() for _, r in entries}
+            customers = {str(r.get("customer_name") or "").strip() for _, r in entries}
+            if len(dates) > 1:
+                report.add_error(first_row_no, f"Invoice '{inv}' has more than one date")
+                continue
+            if len(customers) > 1:
+                report.add_error(first_row_no, f"Invoice '{inv}' has more than one customer")
+                continue
+
+            # Resolve the state that create_invoice will actually use: an existing
+            # customer's stored state, else the sheet's (default AP for a new one).
+            cust_name = entries[0][1].get("customer_name")
+            state = self._resolve_customer_state(session, cust_name, entries[0][1].get("customer_state"))
+
+            computed = Decimal("0")
+            skip = False
+            for _, r in entries:
+                item = (
+                    session.query(Item)
+                    .filter(Item.code == str(r.get("item_code") or "").strip(), Item.is_deleted == false())
+                    .first()
+                )
+                qty = self._parse_number(r.get("quantity"))
+                rate = self._parse_number(r.get("rate"))
+                if item is None or qty is None or rate is None:
+                    skip = True  # a per-cell error already covers this group
+                    break
+                amount = (Decimal(str(qty)) * Decimal(str(rate))).quantize(Decimal("0.01"), ROUND_HALF_UP)
+                cgst, sgst, igst = split_gst(amount, item.gst_rate, state)
+                computed += amount + cgst + sgst + igst
+
+            sheet_total = self._parse_number(entries[0][1].get("invoice_total"))
+            if skip or sheet_total is None:
+                continue
+            if abs(computed - Decimal(str(sheet_total))) > TOTAL_TOLERANCE:
+                report.add_error(
+                    first_row_no,
+                    f"Invoice '{inv}' total mismatch: computed ₹{computed:.2f} but sheet says ₹{sheet_total:.2f}",
+                )
+
+    @staticmethod
+    def _resolve_customer_state(session, customer_name, sheet_state):
+        name = str(customer_name or "").strip()
+        existing = (
+            session.query(Customer)
+            .filter(Customer.name == name, Customer.is_deleted == false())
+            .first()
+        )
+        if existing is not None:
+            return existing.state or DEFAULT_STATE
+        return str(sheet_state).strip() if sheet_state and str(sheet_state).strip() else DEFAULT_STATE
 
     def _validate_cell(self, session, report, row_no, col, raw, defn, checked_refs):
         role = col.role
@@ -381,8 +456,10 @@ class ImportService:
             return self.import_opening_stock(file_path, created_by)
         if import_type == "OPENING_BALANCES":
             return self.import_opening_balances(file_path, created_by)
+        if import_type == "SALES":
+            return self.import_sales(file_path, created_by)
         raise NotImplementedError(
-            f"{import_type} import is added in a later milestone (H3-H5). "
+            f"{import_type} import is added in a later milestone (H4-H5). "
             "Validation and templates are available now."
         )
 
@@ -446,6 +523,89 @@ class ImportService:
             raise
         finally:
             session.close()
+
+    def import_sales(self, file_path: str, created_by: str | None) -> ImportLog:
+        """Import backdated sales invoices, grouped by invoice_no.
+
+        Each invoice is created via the existing SalesService.create_invoice() —
+        GST split, stock OUT rows and the journal entry all come for free — and
+        is its own transaction. If one invoice fails, earlier ones stay saved and
+        the run stops naming the failed invoice (no whole-file rollback, no silent
+        skip). Negative stock is allowed (M28 oversell is "allow but warn"); any
+        item that went negative is recorded in the ImportLog notes for H6.
+        """
+        rows = self._guard_importable(file_path, "SALES")
+        sales = SalesService()
+        customers = CustomerService()
+
+        # Preserve sheet order; group lines by invoice number.
+        grouped: dict[str, list] = {}
+        for row in rows:
+            grouped.setdefault(str(row["invoice_no"]).strip(), []).append(row)
+
+        created = 0
+        stock_notes: list[str] = []
+        current = None
+        session = get_session()
+        try:
+            for inv_no, lines in grouped.items():
+                current = inv_no
+                head = lines[0]
+                customer_id = self._resolve_or_create_customer(session, customers, head, created_by)
+                invoice_date = self._parse_date(head["invoice_date"])
+                line_payload = []
+                for r in lines:
+                    item = (
+                        session.query(Item)
+                        .filter(Item.code == str(r["item_code"]).strip(), Item.is_deleted == false())
+                        .first()
+                    )
+                    line_payload.append({
+                        "item_id": item.id,
+                        "quantity": self._parse_number(r["quantity"]),
+                        "rate": self._parse_number(r["rate"]),
+                    })
+                invoice = sales.create_invoice(
+                    invoice_no=inv_no,
+                    invoice_date=invoice_date,
+                    customer_id=customer_id,
+                    lines=line_payload,
+                    created_by=created_by,
+                )
+                created += 1
+                for w in getattr(invoice, "stock_warnings", []):
+                    stock_notes.append(f"{inv_no}: {w}")
+
+            notes = None
+            if stock_notes:
+                notes = "Items that went negative during import (review in H6):\n" + "\n".join(stock_notes)
+            return self._write_log(session, "SALES", file_path, len(rows), created, "IMPORTED", notes)
+        except Exception as exc:
+            self._write_log(
+                session, "SALES", file_path, len(rows), created, "FAILED",
+                f"Stopped at invoice '{current}' after {created} imported: {exc}",
+            )
+            raise
+        finally:
+            session.close()
+
+    def _resolve_or_create_customer(self, session, customer_service, head, created_by) -> int:
+        """Return the customer id, creating the customer if the name is unknown
+        (the user confirmed by clicking Import — track Decision 6)."""
+        name = str(head["customer_name"]).strip()
+        existing = (
+            session.query(Customer)
+            .filter(Customer.name == name, Customer.is_deleted == false())
+            .first()
+        )
+        if existing is not None:
+            return existing.id
+        gstin = str(head.get("customer_gstin") or "").strip() or None
+        state = str(head.get("customer_state") or "").strip() or DEFAULT_STATE
+        customer = customer_service.add_customer(
+            name=name, gstin=gstin, state=state, created_by=created_by
+        )
+        return customer.id
 
     @staticmethod
     def _write_log(session, import_type, file_path, rows_read, created, status, notes=None) -> ImportLog:

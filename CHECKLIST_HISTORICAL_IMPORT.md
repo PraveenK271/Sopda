@@ -200,36 +200,33 @@ Template `SALES` columns:
 | `rate` | per unit, excluding GST |
 | `invoice_total` | **cross-check**; the figure from the bill book, repeated on every row of the same invoice |
 
-- [ ] `ImportService.import_sales(file_path, created_by) -> ImportLog`
-  - Groups rows by `invoice_no`
-  - **Total cross-check:** compute taxable + GST from the lines and compare
-    against `invoice_total`. A mismatch beyond ₹1 (rounding) is an ERROR
-    naming the invoice, the computed total and the sheet total. This one
-    column catches most typing mistakes on its own.
-  - Also ERROR if the same `invoice_no` appears with two different dates or
-    two different customers
-  - Calls the existing `SalesService.create_invoice()` per invoice, passing
-    the backdated `invoice_date` and the book's `invoice_no`. GST split,
-    stock OUT rows and the journal entry all come free from the existing
-    service.
-  - Each invoice is its own transaction. If invoice 47 of 200 fails, the
-    first 46 stay saved and the run stops with a clear message naming
-    invoice 47 — do NOT roll back the whole file, and do NOT skip and
-    continue silently.
-  - Writes an `ImportLog` row on completion
-
-- [ ] **Allow negative stock during import.** Entry order cannot be
-      guaranteed. Pass a flag through so the oversell check is bypassed for
-      imports, and record every item that went negative as a warning in the
-      `ImportLog` notes for review in H6.
-
-- [ ] **Test it:** `check_h3.py`
-      - a 3-invoice / 7-line file imports; stock drops by the right amount
-        per item; each invoice has a balanced journal entry
-      - an AP customer produces CGST+SGST, an out-of-state customer IGST
-      - a file with a deliberately wrong `invoice_total` on one invoice
-        fails validation naming that invoice, and writes nothing
-      - re-running the same file fails validation on duplicate `invoice_no`
+- [x] `ImportService.import_sales(file_path, created_by) -> ImportLog` DONE:
+  - Groups rows by `invoice_no` (sheet order preserved).
+  - **Total cross-check** and the same-date / same-customer checks live in
+    VALIDATION (`_validate_sales_groups`) so the two-stage contract holds — a
+    mismatch beyond ₹1 is an ERROR naming the invoice + computed + sheet total;
+    two dates or two customers for one invoice_no is an ERROR. The computed
+    total mirrors `create_invoice` exactly (amount quantized then `split_gst`)
+    using the customer's effective state (existing customer's state, else the
+    sheet's / AP default) so it never false-fails.
+  - Calls the existing `SalesService.create_invoice()` per invoice (backdated
+    date + book's invoice_no); GST split, stock OUT rows and the journal come
+    free. Unknown customers are auto-created on import (the Import click is the
+    confirmation — Decision 6).
+  - Each invoice is its own transaction; on failure the run STOPS naming that
+    invoice, earlier invoices stay saved, and a FAILED `ImportLog` records how
+    far it got. Success writes an IMPORTED `ImportLog`.
+- [x] **Negative stock during import:** no bypass flag needed — M28's oversell
+      policy is already "allow but warn", so `create_invoice` records the sale
+      regardless and returns `invoice.stock_warnings`; import_sales collects
+      those into the `ImportLog` notes for H6 review.
+- [x] **Tested — `check_h3.py` PASS (fresh SQLite; refuses on SQL Server):**
+      3-invoice / 7-line file imports, stock A 100→82 & B 100→92, every invoice
+      has a balanced journal; AP invoice CGST+SGST and Karnataka invoice IGST;
+      a wrong `invoice_total` fails validation naming the invoice and writes
+      nothing; a sale beyond stock is allowed (2−5=−3) and recorded in the
+      ImportLog notes; re-running the file fails on duplicate `invoice_no`.
+      check_h1 still PASS on SQL Server (SALES validation coexists).
 
 ---
 
