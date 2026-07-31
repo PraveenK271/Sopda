@@ -230,24 +230,32 @@ Template `SALES` columns:
 
 ---
 
-## Milestone H4 — Purchase import
+## Milestone H4 — Purchase import  ✅ DONE (2026-07-31)
 
 Template `PURCHASES` columns: `bill_no`, `bill_date`, `supplier_name`,
 `supplier_gstin`, `supplier_state`, `item_code`, `quantity`, `rate`,
 `bill_total`.
 
-- [ ] `ImportService.import_purchases(file_path, created_by) -> ImportLog` —
-      mirror of H3, calling the existing
-      `PurchaseService.create_purchase_invoice()`. Stock IN rows and the
-      `Dr Purchase / Dr Input GST / Cr Supplier` journal come free.
-- [ ] `bill_no` uniqueness is **per supplier**, not global — two suppliers
-      can legitimately both have a bill numbered `001`.
-- [ ] Reminder for the user, not code: the Phase 3 OCR screen can scan
-      purchase bills instead of typing them. Excel is better for bulk;
-      OCR is better for the awkward ones. Both end up in the same service.
-- [ ] **Test it:** `check_h4.py` — a 2-bill file imports, stock rises by the
-      right amount, supplier outstanding increases by the bill totals, and
-      the same `bill_no` under two different suppliers is accepted.
+- [x] `ImportService.import_purchases(file_path, created_by) -> ImportLog` —
+      mirror of H3, grouping by (supplier, bill_no) and calling the existing
+      `PurchaseService.create_purchase_invoice()`; stock IN rows and the
+      `Dr Purchase / Dr Input GST / Cr Supplier` journal come free. Unknown
+      suppliers auto-created on import; one-transaction-per-bill, stop-on-fail
+      naming the bill, FAILED `ImportLog` on error.
+- [x] `bill_no` uniqueness is **per supplier**, not global — validation groups
+      by (supplier, bill_no) and only flags a duplicate when THIS supplier
+      already has that bill number in the DB. `purchase_invoices.invoice_no`
+      stays intentionally non-unique. Total cross-check shared with sales
+      (`_check_total` / `_resolve_party_state`, using the supplier's effective
+      state).
+- [x] Reminder (not code): the Phase 3 OCR screen can scan purchase bills
+      instead of typing them — Excel for bulk, OCR for the awkward ones; both
+      end up in the same `create_purchase_invoice`.
+- [x] **Tested — `check_h4.py` PASS (fresh SQLite; refuses on SQL Server):** a
+      2-bill file imports, stock A 0→15 & B 0→5, each bill's journal balanced,
+      supplier outstanding up by the bill totals (1534 / 590), the SAME bill_no
+      `001` under two different suppliers is accepted, and re-running fails on
+      the per-supplier duplicate. H3 still PASS after the shared-helper refactor.
 
 ---
 

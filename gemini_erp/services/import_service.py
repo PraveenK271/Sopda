@@ -22,11 +22,13 @@ from decimal import ROUND_HALF_UP, Decimal
 
 from sqlalchemy import false
 from database import get_session
-from models import Customer, ImportLog, Item, SalesInvoice, Supplier
+from models import Customer, ImportLog, Item, PurchaseInvoice, SalesInvoice, Supplier
 from services.customer_service import CustomerService
 from services.gst_service import split_gst
 from services.opening_balance_service import OpeningBalanceService
+from services.purchase_service import PurchaseService
 from services.sales_service import SalesService
+from services.supplier_service import SupplierService
 
 logger = logging.getLogger(__name__)
 
@@ -239,13 +241,12 @@ class ImportService:
                     report.add_error(row_no, f"{ptype.capitalize()} '{pname}' does not exist")
         elif defn.key == "SALES":
             self._validate_sales_groups(session, report, rows)
-        # Per-supplier bill_no (PURCHASES) lands in H4.
+        elif defn.key == "PURCHASES":
+            self._validate_purchase_groups(session, report, rows)
 
     def _validate_sales_groups(self, session, report, rows):
         """Per-invoice checks: one date + one customer per invoice_no, and the
-        computed total (taxable + GST) matches the bill-book invoice_total (±₹1).
-        Skips a group that already has a blocking per-cell error so the messages
-        stay focused."""
+        computed total (taxable + GST) matches the bill-book invoice_total (±₹1)."""
         groups: dict[str, list] = {}
         for i, row in enumerate(rows):
             inv = str(row.get("invoice_no") or "").strip()
@@ -254,54 +255,91 @@ class ImportService:
 
         for inv, entries in groups.items():
             first_row_no = entries[0][0]
-            dates = {str(r.get("invoice_date") or "").strip() for _, r in entries}
-            customers = {str(r.get("customer_name") or "").strip() for _, r in entries}
-            if len(dates) > 1:
+            if len({str(r.get("invoice_date") or "").strip() for _, r in entries}) > 1:
                 report.add_error(first_row_no, f"Invoice '{inv}' has more than one date")
                 continue
-            if len(customers) > 1:
+            if len({str(r.get("customer_name") or "").strip() for _, r in entries}) > 1:
                 report.add_error(first_row_no, f"Invoice '{inv}' has more than one customer")
                 continue
+            state = self._resolve_party_state(
+                session, Customer, entries[0][1].get("customer_name"), entries[0][1].get("customer_state")
+            )
+            self._check_total(report, entries, "invoice_total", session, state, f"Invoice '{inv}'")
 
-            # Resolve the state that create_invoice will actually use: an existing
-            # customer's stored state, else the sheet's (default AP for a new one).
-            cust_name = entries[0][1].get("customer_name")
-            state = self._resolve_customer_state(session, cust_name, entries[0][1].get("customer_state"))
+    def _validate_purchase_groups(self, session, report, rows):
+        """Per-bill checks. A purchase bill is identified by (supplier, bill_no) —
+        bill_no is unique PER SUPPLIER, not globally (two suppliers may both use
+        '001'). One date per bill; the computed total matches bill_total; and the
+        (supplier, bill_no) pair must not already exist in the database."""
+        groups: dict[tuple, list] = {}
+        for i, row in enumerate(rows):
+            bill = str(row.get("bill_no") or "").strip()
+            supplier = str(row.get("supplier_name") or "").strip()
+            if bill and supplier:
+                groups.setdefault((supplier, bill), []).append((i + 2, row))
 
-            computed = Decimal("0")
-            skip = False
-            for _, r in entries:
-                item = (
-                    session.query(Item)
-                    .filter(Item.code == str(r.get("item_code") or "").strip(), Item.is_deleted == false())
+        for (supplier, bill), entries in groups.items():
+            first_row_no = entries[0][0]
+            if len({str(r.get("bill_date") or "").strip() for _, r in entries}) > 1:
+                report.add_error(first_row_no, f"Bill '{bill}' for '{supplier}' has more than one date")
+                continue
+            # Duplicate only if THIS supplier already has a bill with this number.
+            existing_supplier = (
+                session.query(Supplier)
+                .filter(Supplier.name == supplier, Supplier.is_deleted == false())
+                .first()
+            )
+            if existing_supplier is not None:
+                dup = (
+                    session.query(PurchaseInvoice.id)
+                    .filter(
+                        PurchaseInvoice.invoice_no == bill,
+                        PurchaseInvoice.supplier_id == existing_supplier.id,
+                        PurchaseInvoice.is_deleted == false(),
+                    )
                     .first()
                 )
-                qty = self._parse_number(r.get("quantity"))
-                rate = self._parse_number(r.get("rate"))
-                if item is None or qty is None or rate is None:
-                    skip = True  # a per-cell error already covers this group
-                    break
-                amount = (Decimal(str(qty)) * Decimal(str(rate))).quantize(Decimal("0.01"), ROUND_HALF_UP)
-                cgst, sgst, igst = split_gst(amount, item.gst_rate, state)
-                computed += amount + cgst + sgst + igst
+                if dup is not None:
+                    report.add_error(first_row_no, f"Bill '{bill}' already exists for supplier '{supplier}'")
+                    continue
+            state = self._resolve_party_state(
+                session, Supplier, supplier, entries[0][1].get("supplier_state")
+            )
+            self._check_total(report, entries, "bill_total", session, state, f"Bill '{bill}' for '{supplier}'")
 
-            sheet_total = self._parse_number(entries[0][1].get("invoice_total"))
-            if skip or sheet_total is None:
-                continue
-            if abs(computed - Decimal(str(sheet_total))) > TOTAL_TOLERANCE:
-                report.add_error(
-                    first_row_no,
-                    f"Invoice '{inv}' total mismatch: computed ₹{computed:.2f} but sheet says ₹{sheet_total:.2f}",
-                )
+    def _check_total(self, report, entries, total_col, session, state, label):
+        """Compare the computed taxable+GST for a group's lines to its sheet total.
+        Skips silently if a line has a per-cell error (already reported)."""
+        computed = Decimal("0")
+        for _, r in entries:
+            item = (
+                session.query(Item)
+                .filter(Item.code == str(r.get("item_code") or "").strip(), Item.is_deleted == false())
+                .first()
+            )
+            qty = self._parse_number(r.get("quantity"))
+            rate = self._parse_number(r.get("rate"))
+            if item is None or qty is None or rate is None:
+                return  # a per-cell error already covers this group
+            amount = (Decimal(str(qty)) * Decimal(str(rate))).quantize(Decimal("0.01"), ROUND_HALF_UP)
+            cgst, sgst, igst = split_gst(amount, item.gst_rate, state)
+            computed += amount + cgst + sgst + igst
+
+        sheet_total = self._parse_number(entries[0][1].get(total_col))
+        if sheet_total is None:
+            return
+        if abs(computed - Decimal(str(sheet_total))) > TOTAL_TOLERANCE:
+            report.add_error(
+                entries[0][0],
+                f"{label} total mismatch: computed ₹{computed:.2f} but sheet says ₹{sheet_total:.2f}",
+            )
 
     @staticmethod
-    def _resolve_customer_state(session, customer_name, sheet_state):
-        name = str(customer_name or "").strip()
-        existing = (
-            session.query(Customer)
-            .filter(Customer.name == name, Customer.is_deleted == false())
-            .first()
-        )
+    def _resolve_party_state(session, model, name, sheet_state):
+        """The state create_*_invoice will use for GST: an existing party's stored
+        state, else the sheet's (default Andhra Pradesh for a to-be-created party)."""
+        n = str(name or "").strip()
+        existing = session.query(model).filter(model.name == n, model.is_deleted == false()).first()
         if existing is not None:
             return existing.state or DEFAULT_STATE
         return str(sheet_state).strip() if sheet_state and str(sheet_state).strip() else DEFAULT_STATE
@@ -458,8 +496,10 @@ class ImportService:
             return self.import_opening_balances(file_path, created_by)
         if import_type == "SALES":
             return self.import_sales(file_path, created_by)
+        if import_type == "PURCHASES":
+            return self.import_purchases(file_path, created_by)
         raise NotImplementedError(
-            f"{import_type} import is added in a later milestone (H4-H5). "
+            f"{import_type} import is added in a later milestone (H5). "
             "Validation and templates are available now."
         )
 
@@ -588,6 +628,76 @@ class ImportService:
             raise
         finally:
             session.close()
+
+    def import_purchases(self, file_path: str, created_by: str | None) -> ImportLog:
+        """Import purchase bills, grouped by (supplier, bill_no), via the existing
+        PurchaseService.create_purchase_invoice() — stock IN rows and the
+        Dr Purchase / Dr Input GST / Cr Supplier journal come for free. bill_no is
+        unique per supplier (not global). Same one-transaction-per-bill,
+        stop-on-fail behaviour as sales."""
+        rows = self._guard_importable(file_path, "PURCHASES")
+        purchases = PurchaseService()
+        suppliers = SupplierService()
+
+        grouped: dict[tuple, list] = {}
+        for row in rows:
+            key = (str(row["supplier_name"]).strip(), str(row["bill_no"]).strip())
+            grouped.setdefault(key, []).append(row)
+
+        created = 0
+        current = None
+        session = get_session()
+        try:
+            for (supplier_name, bill_no), lines in grouped.items():
+                current = f"{bill_no} ({supplier_name})"
+                head = lines[0]
+                supplier_id = self._resolve_or_create_supplier(session, suppliers, head, created_by)
+                bill_date = self._parse_date(head["bill_date"])
+                line_payload = []
+                for r in lines:
+                    item = (
+                        session.query(Item)
+                        .filter(Item.code == str(r["item_code"]).strip(), Item.is_deleted == false())
+                        .first()
+                    )
+                    line_payload.append({
+                        "item_id": item.id,
+                        "quantity": self._parse_number(r["quantity"]),
+                        "rate": self._parse_number(r["rate"]),
+                    })
+                purchases.create_purchase_invoice(
+                    invoice_no=bill_no,
+                    invoice_date=bill_date,
+                    supplier_id=supplier_id,
+                    lines=line_payload,
+                    created_by=created_by,
+                )
+                created += 1
+            return self._write_log(session, "PURCHASES", file_path, len(rows), created, "IMPORTED")
+        except Exception as exc:
+            self._write_log(
+                session, "PURCHASES", file_path, len(rows), created, "FAILED",
+                f"Stopped at bill '{current}' after {created} imported: {exc}",
+            )
+            raise
+        finally:
+            session.close()
+
+    def _resolve_or_create_supplier(self, session, supplier_service, head, created_by) -> int:
+        name = str(head["supplier_name"]).strip()
+        existing = (
+            session.query(Supplier)
+            .filter(Supplier.name == name, Supplier.is_deleted == false())
+            .first()
+        )
+        if existing is not None:
+            return existing.id
+        gstin = str(head.get("supplier_gstin") or "").strip() or None
+        state = str(head.get("supplier_state") or "").strip() or DEFAULT_STATE
+        supplier = supplier_service.add_supplier(
+            name=name, gstin=gstin, state=state, created_by=created_by
+        )
+        return supplier.id
 
     def _resolve_or_create_customer(self, session, customer_service, head, created_by) -> int:
         """Return the customer id, creating the customer if the name is unknown
