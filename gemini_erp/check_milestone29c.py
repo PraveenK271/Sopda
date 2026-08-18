@@ -11,9 +11,11 @@ Asserts:
 Run with: python check_milestone29c.py
 """
 
+import os
 import warnings
 from datetime import datetime
 
+os.environ.setdefault("GEMINI_JWT_SECRET", "check-suite-jwt-secret")
 warnings.filterwarnings("ignore")
 
 from fastapi.testclient import TestClient  # noqa: E402

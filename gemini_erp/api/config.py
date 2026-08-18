@@ -3,17 +3,27 @@
 import logging
 import os
 
+from dotenv import load_dotenv
+
+# Load gemini_erp/.env (the same file database.py reads GEMINI_DB_URL from) so
+# GEMINI_JWT_SECRET can be set there. Done here because api.config may be
+# imported before database.py has run its own load_dotenv().
+_GEMINI_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+load_dotenv(os.path.join(_GEMINI_DIR, ".env"))
+load_dotenv()
+
 logger = logging.getLogger(__name__)
 
-# Signing key for JWT access tokens. MUST be set in production (a long random
-# string). A fixed dev fallback keeps tokens stable across a local run but is
-# unsafe for deployment — we warn loudly if it is used.
-_DEV_SECRET = "gemini-erp-dev-insecure-secret-change-me"
-JWT_SECRET = os.getenv("GEMINI_JWT_SECRET", _DEV_SECRET)
-if JWT_SECRET == _DEV_SECRET:
-    logger.warning(
-        "GEMINI_JWT_SECRET is not set - using an insecure development key. "
-        "Set GEMINI_JWT_SECRET before deploying the API."
+# Signing key for JWT access tokens. REQUIRED — there is deliberately NO
+# hardcoded fallback: a shipped default key would let anyone who has seen the
+# source forge a valid token for any user/role (full auth bypass). The API
+# refuses to start without it.
+JWT_SECRET = os.getenv("GEMINI_JWT_SECRET")
+if not JWT_SECRET:
+    raise RuntimeError(
+        "GEMINI_JWT_SECRET is not set. Generate a long random value, e.g.\n"
+        '  python -c "import secrets; print(secrets.token_urlsafe(48))"\n'
+        "and set it in the environment or gemini_erp/.env before starting the API."
     )
 
 JWT_ALGORITHM = "HS256"

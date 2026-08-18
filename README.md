@@ -129,8 +129,10 @@ ONLY process a phone talks to (SQL Server is never exposed to the phone).
 
 ```
 pip install -r requirements-api.txt      # into the SAME venv
-# from the gemini_erp/ folder, with the DB + a real signing key set:
-set GEMINI_JWT_SECRET=<a-long-random-string>     # REQUIRED in production
+# from the gemini_erp/ folder. GEMINI_JWT_SECRET is REQUIRED — the API refuses
+# to start without it (there is no built-in default key, by design).
+python -c "import secrets; print(secrets.token_urlsafe(48))"   # generate one
+set GEMINI_JWT_SECRET=<the-value-above>                        # or put it in gemini_erp/.env
 uvicorn api.main:app --host 0.0.0.0 --port 8000
 ```
 
@@ -142,10 +144,14 @@ uvicorn api.main:app --host 0.0.0.0 --port 8000
   bill on the go — `GET /api/documents` (list), `POST /api/documents/{id}/approve`,
   `POST /api/documents/{id}/reject` (module `documents`). The sign-off records
   who and when; creating the purchase invoice from a bill stays a desktop step.
-- Config (env): `GEMINI_JWT_SECRET` (signing key — a dev fallback is used with a
-  warning if unset), `GEMINI_JWT_TTL_MINUTES` (default 720), `GEMINI_API_CORS_ORIGINS`
-  (comma-separated PWA origins; default `*`). The API reads the same
-  `GEMINI_DB_URL` as the desktop.
+- Config (env): `GEMINI_JWT_SECRET` (signing key — **required**, the API will
+  not start without it), `GEMINI_JWT_TTL_MINUTES` (default 720),
+  `GEMINI_API_CORS_ORIGINS` (comma-separated PWA origins; default `*` — restrict
+  in production). The API reads the same `GEMINI_DB_URL` as the desktop.
+- A user with a pending password change (the seeded default admin, or any
+  admin-reset account) is refused an API token — they must set a real password
+  in the desktop app first. So change the default `admin` / `Admin@1234` on the
+  desktop before the mobile API is useful.
 - **The PWA (M29b) is served by the same server** at the root URL: open
   `http://<host>:8000/` on the phone and "Add to Home Screen" to install it. It
   logs in against `/api/auth/login`, shows the read-only screens (dashboard,

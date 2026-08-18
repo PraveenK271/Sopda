@@ -16,9 +16,12 @@ never depends on the seeded admin's password, which a manual UI test may change.
 Run with: python check_milestone29.py
 """
 
+import os
 import warnings
 from datetime import date, datetime
 
+# The API requires a signing key (no hardcoded fallback); provide one for the check.
+os.environ.setdefault("GEMINI_JWT_SECRET", "check-suite-jwt-secret")
 warnings.filterwarnings("ignore")  # silence the TestClient httpx deprecation note
 
 from fastapi.testclient import TestClient  # noqa: E402
@@ -55,7 +58,10 @@ def main():
         sales_name = f"chk_m29_sales_{stamp}"
         admin_user = auth.create_user(session, admin_name, "AdminPwd@123", "M29 Admin", role_id[ROLE_ADMINISTRATOR])
         sales_user = auth.create_user(session, sales_name, "SalesPwd@123", "M29 Sales", role_id[ROLE_SALES_USER])
-        admin_id, sales_id = admin_user.id, sales_user.id
+        mc_name = f"chk_m29_mustchange_{stamp}"
+        mc_user = auth.create_user(session, mc_name, "ChangeMe@123", "M29 MustChange",
+                                   role_id[ROLE_ADMINISTRATOR], must_change_password=True)
+        admin_id, sales_id, mc_id = admin_user.id, sales_user.id, mc_user.id
     finally:
         session.close()
 
@@ -65,6 +71,14 @@ def main():
     assert r.status_code == 401 and r.json()["detail"] == "Invalid username or password"
     assert client.get("/api/stock").status_code == 401
     print("Login: wrong pw 401, unknown user 401 (generic), no-token 401")
+
+    # 1b. A user who must change their password is blocked at the API even with
+    #     the correct password (must change on the desktop first).
+    mc = _login(mc_name, "ChangeMe@123")
+    assert mc.status_code == 403, mc.status_code
+    assert "change" in mc.json()["detail"].lower(), mc.json()
+    assert "access_token" not in mc.json(), "must_change user was issued a token"
+    print("Login blocked (403) for a must_change_password account")
 
     # 2. Valid login -> token + /api/me permitted modules.
     r = _login(admin_name, "AdminPwd@123")
@@ -121,6 +135,7 @@ def main():
     try:
         auth.deactivate_user(session, admin_id, created_by="check_milestone29")
         auth.deactivate_user(session, sales_id, created_by="check_milestone29")
+        auth.deactivate_user(session, mc_id, created_by="check_milestone29")
     finally:
         session.close()
 

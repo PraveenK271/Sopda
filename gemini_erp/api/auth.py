@@ -171,6 +171,19 @@ def login(body: LoginRequest):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid username or password")
 
     _clear_failures(username)
+
+    # Block accounts that still owe a password change (e.g. the seeded default
+    # admin, or an admin-reset account). This runs only AFTER a correct password,
+    # so it leaks nothing about which usernames exist. It stops a fresh
+    # deployment's well-known default admin from getting an API token before the
+    # password has been changed on the desktop.
+    if user.must_change_password:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "Password change required. Log in to the desktop app to set a new "
+            "password before using the mobile app.",
+        )
+
     token = create_access_token(user)
     return TokenResponse(access_token=token, user=_user_out(user))
 
