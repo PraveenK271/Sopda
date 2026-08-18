@@ -13,6 +13,7 @@ import json
 import logging
 from datetime import datetime
 
+import passlib.handlers.bcrypt  # noqa: F401 — needed so PyInstaller bundles this into the .exe
 from passlib.context import CryptContext
 from sqlalchemy import false, true
 from sqlalchemy.orm import Session, joinedload

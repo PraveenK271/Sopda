@@ -25,6 +25,9 @@ hiddenimports = (
     collect_submodules("sqlalchemy")   # dialects/drivers are imported dynamically
     + collect_submodules("reportlab")  # PDF backends resolved by name
     + collect_submodules("openpyxl")   # Excel export
+    # passlib resolves its bcrypt handler by name at runtime, so static analysis
+    # misses it; naming it here (its bcrypt backend is a normal import from it).
+    + ["passlib.handlers.bcrypt"]
 )
 
 # Reference docs — harmless to ship, handy for support. (No .ui files: the Qt UI
