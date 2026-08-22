@@ -12,12 +12,23 @@ folder.
 
 ## First run
 
-The app creates its database automatically the first time you start it:
+The first time you start the app it creates its database and shows a **login
+screen**. Sign in with the built-in administrator account and you will be asked
+to set your own password straight away:
 
-- **GeminiERP\gemini_erp.db** — this is your data (items, invoices, stock,
-  accounts). **Back it up regularly** by copying this file somewhere safe.
+| Username | Password |
+|---|---|
+| `admin` | `Admin@1234` (you must change it on first login) |
 
-You can start adding items, customers, suppliers and invoices right away.
+Then set your company details on the **Settings** tab and add accounts for your
+team on the **Users** tab. **See [`FIRST_TIME_SETUP.md`](FIRST_TIME_SETUP.md) for
+the full first-time walkthrough.**
+
+Your data lives in **GeminiERP\gemini_erp.db** — **back it up regularly** by
+copying it (or the whole folder) somewhere safe.
+
+> The very first launch can take ~10 seconds while Windows scans the new program
+> — this is normal; later launches are quick.
 
 ## Where your data is stored
 
@@ -55,8 +66,14 @@ manually.
 
 Full details: `ocr_worker\README.md`.
 
+## Multi-user / networked use
+
+Out of the box the app is single-user with a local database. It can also run
+**multi-user** with several PCs sharing one Microsoft SQL Server database, and
+there is a read-only **mobile companion** app. Both are optional and need a bit
+of setup — see the "Multi-user deployment" and "Mobile companion API" sections
+of `README.md`.
+
 ## Known limitations of this build
 
 - **AI natural-language reports** — not yet implemented (a later phase).
-- **Multi-user / networked database** — not yet implemented; this build is
-  single-user with a local database (a later phase).
