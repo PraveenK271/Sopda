@@ -13,7 +13,7 @@
 ; ============================================================================
 
 #define MyAppName "Gemini ERP"
-#define MyAppVersion "1.0.0"
+#define MyAppVersion "1.0.1"
 #define MyAppPublisher "Gemini ERP"
 #define MyAppExeName "GeminiERP.exe"
 #define MyDistDir "dist\GeminiERP"
