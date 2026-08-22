@@ -177,10 +177,17 @@ class PurchaseScreen(QWidget):
 
         # Line entry
         self.item_combo = QComboBox()
+        # Wider so the full "code - name" of the item stays readable; it also
+        # stretches to absorb spare width (see the addWidget stretch below).
+        self.item_combo.setMinimumWidth(320)
         self.new_item_button = QPushButton("+ New Item")
         self.new_item_button.clicked.connect(self.on_new_item)
         self.qty_input = QLineEdit()
         self.rate_input = QLineEdit()
+        # Numeric fields need little room — keep them compact so the width goes
+        # to the item dropdown instead.
+        self.qty_input.setFixedWidth(80)
+        self.rate_input.setFixedWidth(80)
         # add_line_button doubles as "Update Line" while editing a line.
         self.add_line_button = QPushButton("Add Line")
         self.add_line_button.clicked.connect(self.on_add_line)
@@ -189,7 +196,7 @@ class PurchaseScreen(QWidget):
 
         line_form = QHBoxLayout()
         line_form.addWidget(QLabel("Item"))
-        line_form.addWidget(self.item_combo)
+        line_form.addWidget(self.item_combo, 1)  # stretch: take the spare width
         line_form.addWidget(self.new_item_button)
         line_form.addWidget(QLabel("Qty"))
         line_form.addWidget(self.qty_input)
