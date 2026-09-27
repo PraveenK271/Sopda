@@ -17,6 +17,7 @@ the README.
 
 import logging
 import os
+import re
 import shutil
 from datetime import datetime
 
@@ -53,13 +54,33 @@ class BackupService:
             return self._backup_sqlite(dest_dir)
         return self._backup_mssql(dest_dir)
 
-    def _backup_sqlite(self, dest_dir: str | None) -> str:
+    def auto_backup_before_migration(self, reason: str) -> str:
+        """Back up the database before applying pending migrations (Rule C).
+
+        Runs without asking. Returns the backup path; RAISES if the backup could
+        not be written — the caller must then NOT migrate. ``reason`` (normally
+        the app version being installed) goes into the file name, e.g.
+        ``backups/pre_patch_1.1.0_20260926_101500.db``.
+        """
+        label = re.sub(r"[^A-Za-z0-9._-]", "_", reason or "patch")
+        if self.is_sqlite():
+            path = self._backup_sqlite(None, name_stem=f"pre_patch_{label}")
+            # A copy that silently came out empty is not a backup.
+            if not os.path.exists(path) or os.path.getsize(path) == 0:
+                raise RuntimeError(f"Pre-patch backup was not written correctly: {path}")
+        else:
+            # _backup_mssql runs RESTORE VERIFYONLY, which raises on a bad backup.
+            path = self._backup_mssql(None, name_stem=f"pre_patch_{label}")
+        logger.info("Pre-migration backup (%s) written to %s", reason, path)
+        return path
+
+    def _backup_sqlite(self, dest_dir: str | None, name_stem: str = "gemini_erp_backup") -> str:
         dest_dir = dest_dir or _default_backup_dir()
         os.makedirs(dest_dir, exist_ok=True)
         # Back up the file the engine actually uses (from the connection URL),
         # not a hardcoded path — so a GEMINI_DB_URL override is honoured too.
         source = engine.url.database
-        name = f"gemini_erp_backup_{_timestamp()}.db"
+        name = f"{name_stem}_{_timestamp()}.db"
         dest = os.path.join(dest_dir, name)
         # copy2 preserves metadata; SQLite is a single file so this is a complete
         # snapshot as long as no write is mid-flight (fine for a manual backup).
@@ -67,7 +88,7 @@ class BackupService:
         logger.info("SQLite backup of %s written to %s", source, dest)
         return dest
 
-    def _backup_mssql(self, dest_dir: str | None) -> str:
+    def _backup_mssql(self, dest_dir: str | None, name_stem: str | None = None) -> str:
         db_name = engine.url.database
         if not db_name:
             raise RuntimeError("Cannot determine database name for SQL Server backup")
@@ -97,7 +118,7 @@ class BackupService:
                         or _default_backup_dir()
                     )
 
-                filename = f"{db_name}_backup_{_timestamp()}.bak"
+                filename = f"{db_name}_{name_stem or 'backup'}_{_timestamp()}.bak"
                 dest = os.path.join(dest_dir, filename)
 
                 # INIT + FORMAT overwrite/create a fresh media set (no COMPRESSION:

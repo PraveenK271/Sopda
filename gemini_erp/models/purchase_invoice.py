@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import date as date_type
 
-from sqlalchemy import Date, ForeignKey, Numeric, String
+from sqlalchemy import Date, ForeignKey, Numeric, String, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from database import Base
@@ -23,6 +23,16 @@ class PurchaseInvoice(Base, AuditMixin):
     sgst: Mapped[float] = mapped_column(Numeric(12, 2), default=0)
     igst: Mapped[float] = mapped_column(Numeric(12, 2), default=0)
     total: Mapped[float] = mapped_column(Numeric(12, 2), default=0)
+    # Patch v1.1.0 (migration 001). A flat rupee discount off the whole bill,
+    # apportioned across the lines BEFORE GST. Default 0 keeps every pre-patch
+    # bill computing exactly as it did.
+    special_discount: Mapped[float] = mapped_column(
+        Numeric(15, 2), default=0, server_default=text("0"), nullable=False
+    )
+    # Line discounts + special discount, stored only for reporting.
+    total_discount: Mapped[float] = mapped_column(
+        Numeric(15, 2), default=0, server_default=text("0"), nullable=False
+    )
 
     supplier: Mapped["Supplier"] = relationship(back_populates="purchase_invoices")
     items: Mapped[list["PurchaseInvoiceItem"]] = relationship(back_populates="invoice")

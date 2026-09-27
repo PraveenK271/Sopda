@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
 
 from services.backup_service import BackupService
 from services.settings_service import SettingsService
+from version import APP_VERSION
 
 logger = logging.getLogger(__name__)
 
@@ -85,10 +86,14 @@ class SettingsScreen(QWidget):
         )
         self.status_label.setWordWrap(True)
 
+        self.version_label = QLabel(f"Gemini ERP version {APP_VERSION}")
+        self.version_label.setStyleSheet("color: #555;")
+
         layout = QVBoxLayout()
         layout.addLayout(form)
         layout.addLayout(buttons)
         layout.addWidget(self.status_label)
+        layout.addWidget(self.version_label)
         self.setLayout(layout)
 
         self.refresh()

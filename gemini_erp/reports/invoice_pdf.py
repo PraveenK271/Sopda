@@ -91,7 +91,9 @@ def generate_invoice_pdf(invoice_id: int, output_path: str) -> str:
         # Line items
         header = ["#", "Item Code", "Item Name", "HSN", "Qty", "Unit", "Rate", "Amount", "GST"]
         rows = [header]
-        for idx, line in enumerate(invoice.items, start=1):
+        # Only current lines: editing an invoice soft-deletes the old ones.
+        active_lines = [line for line in invoice.items if not line.is_deleted]
+        for idx, line in enumerate(active_lines, start=1):
             item = line.item
             rows.append(
                 [

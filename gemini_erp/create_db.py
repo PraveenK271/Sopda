@@ -24,9 +24,12 @@ from models import (  # noqa: F401
     Receipt,
     Role,
     SalesInvoice,
+    SalesInvoiceAudit,
     SalesInvoiceItem,
+    SchemaMigration,
     StockTransaction,
     Supplier,
+    SupplierCreditNote,
     User,
 )
 from services.auth_service import ensure_roles_and_admin

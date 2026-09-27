@@ -21,6 +21,8 @@ CGST_INPUT = "CGST_INPUT"
 SGST_INPUT = "SGST_INPUT"
 IGST_INPUT = "IGST_INPUT"
 OPENING_EQUITY = "OPENING_EQUITY"
+# Patch v1.1.0 (P4): credit notes received from suppliers as discounts.
+DISCOUNT_RECEIVED = "DISCOUNT_RECEIVED"
 
 # (name, account_type, account_group) for each system account code
 SYSTEM_ACCOUNTS = {
@@ -35,6 +37,9 @@ SYSTEM_ACCOUNTS = {
     IGST_INPUT: ("IGST Input", "ASSET", "Duties & Taxes"),
     # The balancing figure for the one-time opening-balances journal (H2).
     OPENING_EQUITY: ("Opening Balance Equity", "EQUITY", "Capital Account"),
+    # Post-supply discounts from suppliers (credit notes). On-invoice purchase
+    # discounts are NOT posted here — they are part of the purchase price.
+    DISCOUNT_RECEIVED: ("Discount Received", "INCOME", "Indirect Incomes"),
 }
 
 

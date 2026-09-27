@@ -23,6 +23,11 @@ from services.purchase_service import PurchaseService
 
 class PurchaseInvoiceDetailDialog(QDialog):
     LINE_COLUMNS = ["Item Code", "Item Name", "Qty", "Rate", "Amount", "GST"]
+    # Used instead when the bill carries any discount. A bill without one looks
+    # exactly as it did before patch v1.1.0.
+    DISCOUNT_LINE_COLUMNS = [
+        "Item Code", "Item Name", "Qty", "Rate", "Gross", "Disc %", "Disc Amt", "Taxable", "GST",
+    ]
 
     def __init__(self, invoice_id: int, purchase_service: PurchaseService, parent=None):
         super().__init__(parent)
@@ -42,20 +47,39 @@ class PurchaseInvoiceDetailDialog(QDialog):
         header_form.addRow("GSTIN:", QLabel(details["supplier_gstin"] or "-"))
         header_form.addRow("State:", QLabel(details["supplier_state"] or "-"))
 
+        has_discount = bool(details["total_discount"])
+        columns = self.DISCOUNT_LINE_COLUMNS if has_discount else self.LINE_COLUMNS
+
         lines_table = QTableWidget()
-        lines_table.setColumnCount(len(self.LINE_COLUMNS))
-        lines_table.setHorizontalHeaderLabels(self.LINE_COLUMNS)
+        lines_table.setColumnCount(len(columns))
+        lines_table.setHorizontalHeaderLabels(columns)
         lines_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         lines_table.setRowCount(len(details["lines"]))
         for row, line in enumerate(details["lines"]):
-            values = [
-                line["item_code"], line["item_name"], line["quantity"],
-                line["rate"], line["amount"], line["gst_amount"],
-            ]
+            if has_discount:
+                values = [
+                    line["item_code"], line["item_name"], line["quantity"], line["rate"],
+                    f"{line['gross']:.2f}", f"{line['discount_percent']:g}",
+                    f"{line['discount_amount']:.2f}", f"{line['amount']:.2f}", line["gst_amount"],
+                ]
+            else:
+                values = [
+                    line["item_code"], line["item_name"], line["quantity"],
+                    line["rate"], line["amount"], line["gst_amount"],
+                ]
             for col, value in enumerate(values):
                 lines_table.setItem(row, col, QTableWidgetItem(str(value)))
 
         totals_form = QFormLayout()
+        if has_discount:
+            totals_form.addRow("Gross Amount:", QLabel(f"{details['gross_amount']:.2f}"))
+            line_discount = details["total_discount"] - details["special_discount"]
+            if line_discount:
+                totals_form.addRow("Line Discounts:", QLabel(f"-{line_discount:.2f}"))
+            if details["special_discount"]:
+                totals_form.addRow(
+                    "Special Discount:", QLabel(f"-{details['special_discount']:.2f}")
+                )
         totals_form.addRow("Taxable Amount:", QLabel(f"{details['taxable_amount']:.2f}"))
         totals_form.addRow("CGST:", QLabel(f"{details['cgst']:.2f}"))
         totals_form.addRow("SGST:", QLabel(f"{details['sgst']:.2f}"))

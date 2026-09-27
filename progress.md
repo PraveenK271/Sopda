@@ -777,3 +777,134 @@ M28 (concurrency: friendly UNIQUE clash + oversell warn), M29a (FastAPI read
 API), M29c (approve-a-scan write), M29b (installable PWA). Remaining = manual
 on-screen checks (desktop login flow; PWA on a phone) + deployment hardening
 (HTTPS/VPN, real GEMINI_JWT_SECRET, change the default admin password).
+
+---
+
+## Patch v1.1.0 — 2026-09-27 (see INSTRUCTIONS_PATCH_V1_1.md, CHECKLIST_PATCH_V1_1.md)
+
+First release that patches a LIVE database. `APP_VERSION = "1.1.0"` in
+`gemini_erp/version.py` (title bar + Settings); `installer.iss` bumped to 1.1.0.
+
+### P1 — Migration framework — DONE
+- `models/schema_migration.py` (`schema_migrations`), `migrations/` package
+  (`m001_purchase_discounts`, `m002_sales_invoice_audit`,
+  `m003_supplier_credit_notes`, order listed in `migrations/__init__.py`),
+  `services/migration_service.py` (`get_applied_versions`,
+  `get_pending_migrations`, `run_pending`, `column_exists`, `table_exists`,
+  `add_column` with the SQLite `ADD COLUMN` / SQL Server `ADD` difference).
+- Each migration runs in its own transaction with its `schema_migrations` row;
+  the run stops at the first failure (`MigrationError` names the version).
+  **SQLite gotcha:** Python's sqlite3 runs `ALTER TABLE` in autocommit, so a
+  "rolled back" migration kept its DDL. Migrations therefore run on a
+  short-lived SQLite engine that emits `BEGIN` itself (SQLAlchemy pysqlite
+  recipe); `check_p1` proves a failing migration's ALTER is really undone.
+- `BackupService.auto_backup_before_migration(reason)` →
+  `backups/pre_patch_<version>_<timestamp>.db` (SQLite copy) or a verified
+  `BACKUP DATABASE` `.bak` (SQL Server). Raises if not written.
+- Startup (`main._prepare_database`): read-only pending check → "Updating
+  database" modal → backup → `create_all` + seeds (incl.
+  `ensure_roles_and_admin`) → migrations → summary naming the backup; on any
+  failure show the error + backup path and exit. **Deviation from the patch
+  text:** the backup is taken BEFORE `initialize_database()`, not after
+  `ensure_roles_and_admin()`, because `create_all` + seeding already write to
+  the database (found by `check_upgrade_path` — the "pre-patch" backup was not
+  byte-identical). A brand-new database is not backed up (nothing to lose) and
+  migrates silently.
+- `.spec`: `migrations` in `datas` and each module in `hiddenimports`.
+- `check_p1.py` PASS.
+
+### P2 — Purchase discounts — DONE
+- Migration 001: `purchase_invoice_items.discount_percent` NUMERIC(5,2) /
+  `discount_amount` NUMERIC(15,2), `purchase_invoices.special_discount` /
+  `total_discount` NUMERIC(15,2) — all NOT NULL DEFAULT 0.
+- `purchase_service.calculate_purchase()` — one pure function used by the
+  service AND the Purchase screen's live totals (Gross → Discount → Taxable →
+  GST → Net). Line % discount, then the special discount apportioned by line
+  net value (last line with value takes the rounding remainder, so it sums to
+  the paisa), then GST per line. Guard rails: 0–100 %, special ≤ net, not
+  negative; blank/None/"" = 0.
+- Stored meaning: `purchase_invoice_items.amount` = the line's TAXABLE value
+  after both discounts, so registers/HSN/GSTR-3B show net figures unchanged;
+  `discount_amount` = the % discount only. Journal posts net Purchase + net
+  Input GST; no discount ledger (on-invoice discount is part of the price).
+- Purchase Log detail view shows Gross / Disc % / Disc Amt / special discount
+  only when the bill has a discount. **Note:** the app has no purchase PDF, so
+  that detail dialog is the purchase "print" view.
+- `check_p2.py` PASS (incl. Rule B: a no-discount bill totals exactly as the
+  pre-patch formula).
+- **Sales-side discounts are deliberately out of scope**; the same pattern
+  (discount before GST, apportion the bill-level part) applies when added.
+
+### P3 — Edit a saved sales invoice — DONE
+- Migration 002: `sales_invoice_audit` table; `sales_invoices.edit_count`,
+  `last_edited_date`; `stock_transactions.is_reversed`,
+  `journal_entries.is_reversed` (NOT NULL DEFAULT 0).
+- `SalesService.update_invoice()` — ONE transaction: reverse every active OUT
+  row (per row, never grouped by item) with an IN
+  (`SALE_EDIT_REVERSAL`) dated like the original, reverse every un-reversed
+  journal through `post_journal_entry`, flag both `is_reversed` (the
+  second-edit trap), soft-delete old lines, re-post via the same
+  `_apply_lines_and_accounting` as `create_invoice`, bump `edit_count`, write
+  the audit row with before/after JSON. `preview_invoice_edit()` runs every
+  check without writing; the UI shows its warnings for confirmation.
+- Blocks: invoice_no changed, no lines, locked period (old or new date), date
+  moved to another month, empty reason, role other than Administrator /
+  Accountant (checked in the service). Warns: earlier month, customer changed,
+  receipts recorded. Oversell follows the sale policy (warn, not block).
+- Receipts are recorded against the CUSTOMER, not an invoice, so the receipt
+  warning fires when the customer has any receipt dated on/after the invoice.
+- UI: Sales Log "Edit Selected Invoice" (only created for Administrator /
+  Accountant) → Billing screen in edit mode (invoice no read-only, mandatory
+  reason, Cancel Edit), offers to save the regenerated PDF; "Edit History"
+  from the log and from the invoice detail. Invoice PDF and details now skip
+  soft-deleted lines (before this, the PDF printed every line row).
+- `check_p3.py` PASS: the 8-row stock matrix (row 8 = 94), accounting nets,
+  customer AP→KA (CGST+SGST → IGST), all guards and warnings, audit, and the
+  byte-for-byte rollback test.
+
+### P4 — Supplier credit notes — DONE
+- Migration 003: `supplier_credit_notes` (unique per supplier + number).
+  `credit_note_date` is `Date`, not `DateTime` as the patch text said —
+  consistent with every other document date and the MSSQL date-binding issue.
+- `DISCOUNT_RECEIVED` system account (INCOME, "Indirect Incomes"), seeded
+  idempotently by `ensure_system_accounts()`.
+- `services/credit_note_service.py`: GST note → Dr Supplier / Cr Discount
+  Received (total − GST) + Cr Input CGST/SGST/IGST; commercial note → Dr
+  Supplier / Cr Discount Received, no GST ledger. Validation per the spec; a
+  GST note may differ from its parts by ≤ Rs 1 round-off, which goes to
+  Discount Received so the entry still balances. GOODS_RETURN refused.
+  `update_ims_status()` is bookkeeping only (Input GST was already credited).
+- `ui/credit_notes.py` under Purchases → "Credit Notes Received"; register
+  export (Excel + PDF) in `reports/credit_note_register.py` with filters for
+  IMS-pending and pending notes near/past the 30 November cut-off.
+- `check_p4.py` PASS.
+
+### P5 — Docs, packaging, upgrade test
+- `check_patch_ui.py` (offscreen) PASS: startup paths, per-role Edit button,
+  purchase live totals, billing edit mode, credit-note form.
+- `check_upgrade_path.py` PASS on a copy of the pre-patch dev `gemini_erp.db`
+  (9 purchases, 10 sales, 17 journals): backup byte-identical to the original;
+  all 243 pre-existing rows unchanged; every purchase/sales total, stock figure
+  and ledger balance identical (TB 10,133.00 both sides); then a discounted
+  purchase, a credit note and an edit of a pre-patch sale, TB balanced each time.
+- **Found by the upgrade test and fixed:** SQLite databases created while
+  `stock_transactions.date` was DateTime store `'YYYY-MM-DD 00:00:00.000000'`,
+  which the ORM's Date type could not parse — loading such a row crashed (this
+  also affected the existing purchase edit). `StockTransaction.date` now reads
+  both forms via a SQLite `DATE(regexp=...)` variant; stored data untouched.
+  Date-RANGE filters on those old string values still compare as text (not
+  used by any stock figure — stock sums all rows).
+
+### Known limitations of v1.1.0
+- No sales-side discounts.
+- No invoice cancellation / void and no sales credit note — an invoice cannot
+  be emptied by an edit; the honest route is a credit note once that exists.
+- Purchase invoices keep their EXISTING edit (soft-delete + re-post, no audit
+  trail); moving them to the P3 reverse-and-re-post design is open.
+- Goods-return credit notes are deferred to Purchase Return (not built).
+- IMS status is maintained by hand, not fetched from the GST portal.
+- GSTR-3B's ITC figure comes from purchase invoices only; it does not yet net
+  off Input GST reversed by GST credit notes (the ledgers do). Accountant to
+  confirm the treatment before this is changed.
+- The FastAPI companion does not migrate the database: launch the desktop app
+  once after updating, before starting the API.

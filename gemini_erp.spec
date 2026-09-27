@@ -28,6 +28,15 @@ hiddenimports = (
     # passlib resolves its bcrypt handler by name at runtime, so static analysis
     # misses it; naming it here (its bcrypt backend is a normal import from it).
     + ["passlib.handlers.bcrypt"]
+    # Schema migrations are imported BY NAME at startup (MigrationService), so
+    # static analysis cannot see them — same class of problem as passlib above.
+    # Every new migrations/mNNN_*.py must be added here.
+    + [
+        "migrations",
+        "migrations.m001_purchase_discounts",
+        "migrations.m002_sales_invoice_audit",
+        "migrations.m003_supplier_credit_notes",
+    ]
 )
 
 # Reference docs — harmless to ship, handy for support. (No .ui files: the Qt UI
@@ -36,6 +45,9 @@ datas = [
     ("CLAUDE.md", "."),
     ("CHECKLIST.md", "."),
     ("ROADMAP.md", "."),
+    # Migration sources shipped alongside for support/inspection; the modules
+    # the app actually runs are the frozen copies from hiddenimports.
+    (f"{APP_DIR}/migrations", "migrations"),
 ]
 
 a = Analysis(

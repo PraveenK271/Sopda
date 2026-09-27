@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from datetime import date as date_type
 
-from sqlalchemy import Date, ForeignKey, Integer, Numeric, String
+from sqlalchemy import Boolean, Date, ForeignKey, Integer, Numeric, String, text
+from sqlalchemy.dialects import sqlite
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from database import Base
@@ -22,6 +23,22 @@ class StockTransaction(Base, AuditMixin):
     # every other business-date column). It was previously DateTime, which the
     # MSSQL driver rejects when handed a plain date; Date matches the value that
     # is actually stored and stays consistent with sales/purchase/journal dates.
-    date: Mapped[date_type] = mapped_column(Date, default=date_type.today)
+    #
+    # SQLite databases created while it was DateTime still hold rows like
+    # '2026-06-13 00:00:00.000000', which the plain Date type cannot parse, so
+    # loading such a row crashed (found testing the v1.1.0 upgrade path). The
+    # regexp reads the leading YYYY-MM-DD of either form. Read-side only: the
+    # stored data is untouched (patch Rule A) and new rows are written as
+    # plain dates. SQL Server is unaffected.
+    date: Mapped[date_type] = mapped_column(
+        Date().with_variant(sqlite.DATE(regexp=r"(\d{4})-(\d{2})-(\d{2})"), "sqlite"),
+        default=date_type.today,
+    )
+    # Patch v1.1.0 (migration 002): set once this row has been cancelled by a
+    # reversing row (sales invoice edit). It exists ONLY so a second edit never
+    # reverses the same row twice; stock still sums every row regardless.
+    is_reversed: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=text("0"), nullable=False
+    )
 
     item: Mapped["Item"] = relationship(back_populates="stock_transactions")

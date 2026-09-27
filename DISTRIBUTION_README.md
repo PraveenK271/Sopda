@@ -37,12 +37,61 @@ copying it (or the whole folder) somewhere safe.
 | Database            | `GeminiERP\gemini_erp.db`       |
 | Scanned bills       | `GeminiERP\documents\`          |
 | Log file            | `GeminiERP\logs\gemini_erp.log` |
+| Backups             | `GeminiERP\backups\`            |
 
 **Back up the entire `GeminiERP` folder regularly** — that captures your
 database and all scanned documents together.
 
 If the app ever fails to start, open `logs\gemini_erp.log` — the error is
 recorded there.
+
+## Updating from an earlier version
+
+To update, **install the new version over the existing one**. Run the new
+installer, which installs into the same folder by default. If you use the
+zipped folder, copy the new files over the old `GeminiERP` folder. Your data
+is kept:
+
+- **Keep** `gemini_erp.db` (your database), the `documents\` folder and, if you
+  use one, the `.env` file. The installer never overwrites or removes them.
+  When copying a zip by hand, do not delete them.
+
+The **first launch after an update** shows a one-time **"Updating database,
+please wait"** message. The app then:
+
+1. **backs up your database automatically**, before changing anything:
+   - Single-user (SQLite): to `GeminiERP\backups\pre_patch_<version>_<date>_<time>.db`
+   - SQL Server: a `.bak` in the SQL Server instance's own backup folder, named
+     `GeminiERP_pre_patch_<version>_<date>_<time>.bak`
+2. adds the new columns and tables the update needs. Existing invoices, stock
+   and balances are not changed.
+3. tells you which updates were applied and where the backup is.
+
+If the backup cannot be written, **nothing is changed** and the app closes
+with a message. If an update step fails, the app closes rather than open a
+half-updated database, and names the backup file.
+
+**Multi-user (SQL Server):** update and launch **one** PC first and let it
+finish the database update, then update the other PCs. That first launch must
+be by a Windows account that SQL Server allows to back up the database
+(e.g. the administrator's). Otherwise the backup fails and the update will
+not start. If you run the mobile
+companion API, start it only after that first launch.
+
+### Going back to the previous version (rollback)
+
+Updates only ever ADD to the database, so going back is simply:
+
+1. Close the application (on every PC).
+2. Restore the automatic pre-update backup:
+   - SQLite: copy `backups\pre_patch_<version>_….db` over `gemini_erp.db`
+     (keep a copy of the current file first).
+   - SQL Server: restore the `GeminiERP_pre_patch_….bak` in SQL Server
+     Management Studio (Restore Database → From device).
+3. Reinstall the previous version's folder or installer.
+
+Anything entered after the update is not in that backup, so re-enter it.
+Never try to "undo" an update by editing the database by hand.
 
 ## OCR setup (optional — only for scanning purchase bills)
 

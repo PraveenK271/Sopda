@@ -4,12 +4,23 @@ import logging
 import os
 import sys
 
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction
-from PySide6.QtWidgets import QApplication, QDialog, QMainWindow, QTabWidget
+from PySide6.QtWidgets import (
+    QApplication,
+    QDialog,
+    QLabel,
+    QMainWindow,
+    QMessageBox,
+    QTabWidget,
+    QVBoxLayout,
+)
 
 from create_db import initialize_database
-from database import get_app_root
+from database import get_app_root, get_session
 from services.auth_service import AuthService
+from services.backup_service import BackupService
+from services.migration_service import MigrationError, MigrationService
 from services.permissions import (
     MODULE_ACCOUNTS,
     MODULE_BANKING,
@@ -29,6 +40,7 @@ from ui.balance_sheet import BalanceSheetScreen
 from ui.banking import BankingScreen
 from ui.billing import BillingScreen
 from ui.change_password import ChangePasswordDialog
+from ui.credit_notes import CreditNotesScreen
 from ui.data_import import DataImportScreen
 from ui.day_book import DayBookScreen
 from ui.gst_reports import GstReportsScreen
@@ -47,6 +59,7 @@ from ui.settings import SettingsScreen
 from ui.trial_balance import TrialBalanceScreen
 from ui.user_management import UserManagementScreen
 from ui.verify_and_lock import VerifyAndLockScreen
+from version import APP_VERSION
 
 
 class MainWindow(QMainWindow):
@@ -58,7 +71,7 @@ class MainWindow(QMainWindow):
         user = SessionContext.get_user()
         role_name = user.role.name if user and user.role else ""
         display_name = (user.full_name or user.username) if user else ""
-        self.setWindowTitle(f"Gemini ERP — {display_name} ({role_name})")
+        self.setWindowTitle(f"Gemini ERP {APP_VERSION} — {display_name} ({role_name})")
         self.resize(1200, 800)
 
         self.tabs = QTabWidget()
@@ -86,13 +99,22 @@ class MainWindow(QMainWindow):
 
         if self._can(user, MODULE_PURCHASES):
             self.purchase_screen = PurchaseScreen()
-            self.tabs.addTab(self.purchase_screen, "Purchases")
+            self.credit_notes_screen = CreditNotesScreen()
+            self.purchases_tabs = QTabWidget()
+            self.purchases_tabs.addTab(self.purchase_screen, "Purchase Entry")
+            self.purchases_tabs.addTab(self.credit_notes_screen, "Credit Notes Received")
+            self.tabs.addTab(self.purchases_tabs, "Purchases")
             self._refreshers.append(self.purchase_screen.refresh_lookups)
+            self._refreshers.append(self.credit_notes_screen.refresh)
 
         if self._can(user, MODULE_SALES_LOG):
             self.sales_log_screen = SalesLogScreen()
             self.tabs.addTab(self.sales_log_screen, "Sales Log")
             self._refreshers.append(self.sales_log_screen.refresh_invoices)
+            # Editing a saved invoice reuses the Billing screen. The Edit button
+            # itself only exists for roles allowed to edit (SalesLogScreen).
+            if self._can(user, MODULE_BILLING):
+                self.sales_log_screen.edit_requested.connect(self.on_edit_sales_invoice)
 
         if self._can(user, MODULE_PURCHASE_LOG):
             self.purchase_log_screen = PurchaseLogScreen()
@@ -187,7 +209,12 @@ class MainWindow(QMainWindow):
 
     def on_edit_purchase_invoice(self, invoice_id: int):
         self.purchase_screen.load_invoice_for_edit(invoice_id)
-        self.tabs.setCurrentWidget(self.purchase_screen)
+        self.purchases_tabs.setCurrentWidget(self.purchase_screen)
+        self.tabs.setCurrentWidget(self.purchases_tabs)
+
+    def on_edit_sales_invoice(self, invoice_id: int):
+        self.billing_screen.load_invoice_for_edit(invoice_id)
+        self.tabs.setCurrentWidget(self.billing_screen)
 
     def on_tab_changed(self):
         for refresh in self._refreshers:
@@ -223,6 +250,89 @@ def _bootstrap() -> None:
     initialize_database()
 
 
+def _prepare_database(app: QApplication) -> bool:
+    """Bootstrap the database and apply any pending schema migrations, safely.
+
+    Order (INSTRUCTIONS_PATCH_V1_1.md, P1 + Rule C):
+      1. read-only check for pending migrations
+      2. if any, show a modal "please wait" and — for an EXISTING database —
+         take the automatic backup FIRST. This is deliberately before
+         _bootstrap: initialize_database() already writes (create_all adds the
+         new tables, seeds add the new ledger account), so a backup taken after
+         it would not be a true pre-patch copy. A brand-new database has
+         nothing to back up.
+      3. _bootstrap(): create_all + seeds, incl. ensure_roles_and_admin()
+      4. run the pending migrations
+    A failed backup means nothing is touched; a failed migration means the app
+    does not open half-migrated. Either way the user is told why (and where the
+    backup is) and the app exits (returns False).
+    """
+    service = MigrationService()
+    session = get_session()
+    try:
+        pending = service.get_pending_migrations(session)
+        if not pending:
+            _bootstrap()
+            return True
+        existing_install = service.has_existing_data()
+
+        wait = QDialog()
+        wait.setWindowTitle(f"Gemini ERP {APP_VERSION}")
+        wait.setModal(True)
+        wait.setWindowFlag(Qt.WindowType.WindowCloseButtonHint, False)
+        layout = QVBoxLayout(wait)
+        layout.addWidget(QLabel(
+            "Updating database, please wait…\n\n"
+            "A backup is taken first. This happens once after an update."
+        ))
+        wait.show()
+        app.processEvents()
+
+        backup_path = None
+        if existing_install:
+            try:
+                backup_path = BackupService().auto_backup_before_migration(APP_VERSION)
+            except Exception as exc:
+                wait.close()
+                logging.getLogger(__name__).exception("Pre-migration backup failed")
+                QMessageBox.critical(
+                    None, "Database update not started",
+                    "The automatic backup could not be written, so the database was "
+                    f"NOT updated.\n\n{exc}\n\nThe application will now close. Your data "
+                    "is unchanged.",
+                )
+                return False
+
+        try:
+            _bootstrap()
+            applied = service.run_pending(session, applied_by="system")
+        except Exception as exc:
+            wait.close()
+            logging.getLogger(__name__).exception("Database update failed")
+            QMessageBox.critical(
+                None, "Database update failed",
+                f"{exc}\n\n"
+                + (f"Applied before the failure: {', '.join(exc.applied) or 'none'}.\n"
+                   if isinstance(exc, MigrationError) else "")
+                + (f"A backup taken just before the update is at:\n{backup_path}\n\n"
+                   if backup_path else "")
+                + "The application will now close rather than open a half-updated "
+                "database. See logs/gemini_erp.log for details.",
+            )
+            return False
+
+        wait.close()
+        if existing_install:
+            QMessageBox.information(
+                None, "Database updated",
+                f"Database updated to Gemini ERP {APP_VERSION}.\n\n"
+                f"Applied: {', '.join(applied)}\n\nBackup of the previous database:\n{backup_path}",
+            )
+        return True
+    finally:
+        session.close()
+
+
 def _login_flow() -> bool:
     """Show login, then a forced password change if required.
 
@@ -246,8 +356,11 @@ def _login_flow() -> bool:
 def main():
     _configure_logging()
     try:
-        _bootstrap()
+        # QApplication first: the migration step below may need to show dialogs.
         app = QApplication(sys.argv)
+        # Backup (if patching) -> create_all + seeds -> migrations. See docstring.
+        if not _prepare_database(app):
+            sys.exit(1)
         # Loop so Logout returns to the login screen without restarting the app.
         while True:
             if not _login_flow():

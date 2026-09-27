@@ -71,6 +71,33 @@ gemini_erp/
 
 ---
 
+## Patching rules (from v1.1.0 — users have LIVE data)
+
+From v1.1.0 on, releases are installed over existing installations. **Every
+schema change needs a numbered migration** in `gemini_erp/migrations/`
+(`mNNN_<name>.py`, listed in `migrations/__init__.py` AND in the `.spec`
+`hiddenimports`). `Base.metadata.create_all()` creates missing tables but
+**never adds columns** to existing tables — a model column without a migration
+fails on a user's database with "Invalid column name".
+
+- **Rule A — Migrations are ADDITIVE ONLY.** Add a column (nullable, or NOT
+  NULL with a default) or add a table. Never drop, rename or retype a column,
+  and never delete rows. Every migration is idempotent (check
+  `column_exists` / `table_exists` first). Rollback = restore the backup;
+  never write a "downgrade" migration.
+- **Rule B — Existing records behave exactly as before.** Every new field's
+  default must make old rows compute to the same numbers. Prove it with a test.
+- **Rule C — Back up before migrating, automatically.** Startup takes the
+  backup (`backups/pre_patch_<version>_<timestamp>`) before touching an
+  existing database — before `create_all` and seeding too. If the backup fails,
+  nothing runs and the app exits.
+
+Test every patch with `check_upgrade_path.py` against a copy of a real
+pre-patch database, and bump `APP_VERSION` in `gemini_erp/version.py` (and
+`installer.iss`).
+
+---
+
 ## Core tables (Phase 1)
 
 1. **items** — id, code, name, hsn_code, gst_rate, unit, opening_stock, reorder_level

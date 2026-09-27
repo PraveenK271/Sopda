@@ -58,6 +58,26 @@ That is the payoff of getting the schema right in Phase 1.
 
 ---
 
+## Maintenance patches
+
+Releases installed over an existing installation. Schema changes ship as
+numbered, additive-only migrations applied on first launch after an automatic
+backup (see `CLAUDE.md` → Patching rules).
+
+### v1.1.0 — see `INSTRUCTIONS_PATCH_V1_1.md`, `CHECKLIST_PATCH_V1_1.md`
+
+- Migration framework (`migrations/`, `MigrationService`, automatic pre-patch backup)
+- Discount % per line and a bill-level Special Discount on purchases, applied
+  before GST (special discount apportioned across lines)
+- Edit a saved sales invoice — reverse and re-post, never delete; audit trail
+- Credit Notes received from suppliers (GST vs commercial), IMS status, register
+
+**Still open after v1.1.0:** sales-side discounts; Purchase Return (goods sent
+back, incl. goods-return credit notes); sales credit notes / invoice
+cancellation; editing purchase invoices with the reverse-and-re-post pattern.
+
+---
+
 ## How to use these three files
 
 - **CLAUDE.md** — the rulebook Claude Code reads for context and conventions.

@@ -15,9 +15,12 @@ from models.purchase_invoice_item import PurchaseInvoiceItem
 from models.receipt import Receipt
 from models.role import Role
 from models.sales_invoice import SalesInvoice
+from models.sales_invoice_audit import SalesInvoiceAudit
 from models.sales_invoice_item import SalesInvoiceItem
+from models.schema_migration import SchemaMigration
 from models.stock_transaction import StockTransaction
 from models.supplier import Supplier
+from models.supplier_credit_note import SupplierCreditNote
 from models.user import User
 
 __all__ = [
@@ -38,8 +41,11 @@ __all__ = [
     "Receipt",
     "Role",
     "SalesInvoice",
+    "SalesInvoiceAudit",
     "SalesInvoiceItem",
+    "SchemaMigration",
     "StockTransaction",
     "Supplier",
+    "SupplierCreditNote",
     "User",
 ]

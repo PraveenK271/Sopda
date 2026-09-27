@@ -2,6 +2,10 @@
 
 UI only collects input and displays results - saving, stock deduction and
 GST calculation all live in the service layer.
+
+Patch v1.1.0 (P3): the same screen edits a saved invoice when opened from the
+Sales Log — invoice number locked, a mandatory reason, and the service's
+warnings confirmed before anything is written (SalesService.update_invoice).
 """
 
 import logging
@@ -54,6 +58,8 @@ class BillingScreen(QWidget):
         self._editing_line_index: int | None = None
         self.last_invoice_id: int | None = None
         self.last_invoice_no: str | None = None
+        # None = creating a new invoice; an id = editing that saved invoice.
+        self._editing_invoice_id: int | None = None
 
         self._build_ui()
         self.refresh_lookups()
@@ -66,10 +72,22 @@ class BillingScreen(QWidget):
         self.customer_combo = QComboBox()
         self.customer_combo.currentIndexChanged.connect(self.refresh_lines_table)
 
+        # Only shown while editing a saved invoice; required by the service.
+        self.edit_banner = QLabel("")
+        self.edit_banner.setStyleSheet("color: #8a6d00; font-weight: bold;")
+        self.edit_banner.setVisible(False)
+        self.edit_reason_input = QLineEdit()
+        self.edit_reason_input.setPlaceholderText("Required: why is this invoice being changed?")
+        self.edit_reason_label = QLabel("Reason for edit")
+
         header_form = QFormLayout()
+        header_form.addRow(self.edit_banner)
         header_form.addRow("Invoice No", self.invoice_no_input)
         header_form.addRow("Date", self.date_input)
         header_form.addRow("Customer", self.customer_combo)
+        header_form.addRow(self.edit_reason_label, self.edit_reason_input)
+        self.edit_reason_label.setVisible(False)
+        self.edit_reason_input.setVisible(False)
 
         # Quick "add a new customer" so billing can be tested without a
         # separate Customer Master screen.
@@ -93,8 +111,16 @@ class BillingScreen(QWidget):
 
         # Line entry
         self.item_combo = QComboBox()
+        # Wider so the full "code - name" of the item stays readable; it also
+        # stretches to absorb spare width (see the addWidget stretch below).
+        # Same layout as the Purchases line-entry row.
+        self.item_combo.setMinimumWidth(320)
         self.qty_input = QLineEdit()
         self.rate_input = QLineEdit()
+        # Numeric fields need little room — keep them compact so the width goes
+        # to the item dropdown instead.
+        self.qty_input.setFixedWidth(80)
+        self.rate_input.setFixedWidth(80)
         # add_line_button doubles as "Update Line" while editing a line.
         self.add_line_button = QPushButton("Add Line")
         self.add_line_button.clicked.connect(self.on_add_line)
@@ -103,7 +129,7 @@ class BillingScreen(QWidget):
 
         line_form = QHBoxLayout()
         line_form.addWidget(QLabel("Item"))
-        line_form.addWidget(self.item_combo)
+        line_form.addWidget(self.item_combo, 1)  # stretch: take the spare width
         line_form.addWidget(QLabel("Qty"))
         line_form.addWidget(self.qty_input)
         line_form.addWidget(QLabel("Rate"))
@@ -139,9 +165,14 @@ class BillingScreen(QWidget):
         self.pdf_button.setEnabled(False)
         self.pdf_button.clicked.connect(self.on_save_pdf)
 
+        self.cancel_edit_button = QPushButton("Cancel Edit")
+        self.cancel_edit_button.clicked.connect(self.on_cancel_edit)
+        self.cancel_edit_button.setVisible(False)
+
         buttons_layout = QHBoxLayout()
         buttons_layout.addWidget(self.save_button)
         buttons_layout.addWidget(self.pdf_button)
+        buttons_layout.addWidget(self.cancel_edit_button)
 
         layout = QVBoxLayout()
         layout.addLayout(header_form)
@@ -307,6 +338,10 @@ class BillingScreen(QWidget):
 
         invoice_date = self.date_input.date().toPython()
 
+        if self._editing_invoice_id is not None:
+            self._save_edited_invoice(invoice_no, invoice_date, customer_data["id"])
+            return
+
         try:
             invoice = self.sales_service.create_invoice(
                 invoice_no=invoice_no,
@@ -336,6 +371,142 @@ class BillingScreen(QWidget):
         self.invoice_no_input.clear()
         self.refresh_lines_table()
         self.refresh_lookups()
+
+    # ----- editing a saved invoice (patch v1.1.0, P3) ---------------------
+
+    def load_invoice_for_edit(self, invoice_id: int) -> None:
+        """Prefill the screen with a saved invoice and switch to edit mode.
+
+        Called from the Sales Log. The invoice number is read-only — it is the
+        legal document number — and saving requires a reason.
+        """
+        try:
+            details = self.sales_service.get_invoice_details(invoice_id)
+        except Exception as exc:
+            logger.exception("Failed to load invoice %s for edit", invoice_id)
+            QMessageBox.critical(self, "Error", f"Could not open invoice:\n{exc}")
+            return
+
+        self.refresh_lookups()
+        self.invoice_no_input.setText(details["invoice_no"])
+        self.invoice_no_input.setReadOnly(True)
+        d = details["date"]
+        self.date_input.setDate(QDate(d.year, d.month, d.day))
+        for index in range(self.customer_combo.count()):
+            data = self.customer_combo.itemData(index)
+            if data and data["id"] == details["customer_id"]:
+                self.customer_combo.setCurrentIndex(index)
+                break
+
+        self.lines = [
+            {
+                "item_id": line["item_id"],
+                "code": line["item_code"],
+                "name": line["item_name"],
+                "gst_rate": line["gst_rate"],
+                "quantity": Decimal(str(line["quantity"])),
+                "rate": Decimal(str(line["rate"])),
+            }
+            for line in details["lines"]
+        ]
+
+        self._editing_invoice_id = invoice_id
+        self.edit_banner.setText(
+            f"Editing saved invoice {details['invoice_no']} "
+            f"(edited {details['edit_count']} time(s) before). The original stock and "
+            "accounting entries are reversed and re-posted on save."
+        )
+        self.edit_banner.setVisible(True)
+        self.edit_reason_input.clear()
+        self.edit_reason_label.setVisible(True)
+        self.edit_reason_input.setVisible(True)
+        self.cancel_edit_button.setVisible(True)
+        self.save_button.setText("Update Invoice")
+        self._reset_line_entry()
+        self.refresh_lines_table()
+
+    def on_cancel_edit(self):
+        self._exit_edit_mode()
+        self.lines = []
+        self._reset_line_entry()
+        self.invoice_no_input.clear()
+        self.refresh_lines_table()
+
+    def _exit_edit_mode(self) -> None:
+        self._editing_invoice_id = None
+        self.invoice_no_input.setReadOnly(False)
+        self.edit_banner.setVisible(False)
+        self.edit_reason_input.clear()
+        self.edit_reason_label.setVisible(False)
+        self.edit_reason_input.setVisible(False)
+        self.cancel_edit_button.setVisible(False)
+        self.save_button.setText("Save Invoice")
+
+    def _save_edited_invoice(self, invoice_no: str, invoice_date, customer_id: int) -> None:
+        reason = self.edit_reason_input.text().strip()
+        if not reason:
+            QMessageBox.warning(self, "Reason required", "Enter the reason for this edit.")
+            return
+
+        new_data = {
+            "invoice_no": invoice_no,
+            "date": invoice_date,
+            "customer_id": customer_id,
+            "lines": [
+                {"item_id": line["item_id"], "quantity": line["quantity"], "rate": line["rate"]}
+                for line in self.lines
+            ],
+        }
+        username = SessionContext.get_username()
+
+        # 1) all checks, nothing written: blockers raise, warnings come back.
+        try:
+            warnings = self.sales_service.preview_invoice_edit(
+                self._editing_invoice_id, new_data, reason, username
+            )
+        except Exception as exc:
+            QMessageBox.critical(self, "Cannot edit invoice", str(exc))
+            return
+        if warnings:
+            answer = QMessageBox.question(
+                self, "Please confirm",
+                "\n\n".join(f"• {w}" for w in warnings) + "\n\nSave the edit anyway?",
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                return
+
+        # 2) the edit itself — one transaction in the service.
+        try:
+            invoice = self.sales_service.update_invoice(
+                self._editing_invoice_id, new_data, reason, username
+            )
+        except Exception as exc:
+            logger.exception("Failed to update invoice")
+            QMessageBox.critical(self, "Error", f"Could not update invoice:\n{exc}")
+            return
+
+        stock_warnings = getattr(invoice, "stock_warnings", [])
+        if stock_warnings:
+            QMessageBox.warning(self, "Stock warning", "\n".join(stock_warnings))
+        self.last_invoice_id = invoice.id
+        self.last_invoice_no = invoice.invoice_no
+        self.pdf_button.setEnabled(True)
+        self._exit_edit_mode()
+        self.lines = []
+        self._reset_line_entry()
+        self.invoice_no_input.clear()
+        self.refresh_lines_table()
+        self.refresh_lookups()
+
+        # The PDF is rendered from the saved data, so the updated invoice needs
+        # a fresh copy — any earlier PDF of it is now out of date.
+        answer = QMessageBox.question(
+            self, "Updated",
+            f"Invoice {invoice.invoice_no} updated (edit #{invoice.edit_count}).\n\n"
+            "Any PDF printed before this edit is out of date. Save the updated PDF now?",
+        )
+        if answer == QMessageBox.StandardButton.Yes:
+            self.on_save_pdf()
 
     def on_save_pdf(self):
         if self.last_invoice_id is None:

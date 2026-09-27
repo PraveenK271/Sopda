@@ -26,10 +26,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from services.gst_service import split_gst
 from services.session_context import SessionContext
 from services.item_service import ItemService
-from services.purchase_service import PurchaseService
+from services.purchase_service import PurchaseService, calculate_purchase
 from services.supplier_service import SupplierService
 
 logger = logging.getLogger(__name__)
@@ -120,7 +119,9 @@ class AddItemDialog(QDialog):
 
 
 class PurchaseScreen(QWidget):
-    LINE_COLUMNS = ["Item", "Qty", "Rate", "Amount", "GST"]
+    # "Taxable" is after the line discount AND the line's share of the special
+    # discount — the value GST is charged on.
+    LINE_COLUMNS = ["Item", "Qty", "Rate", "Disc %", "Discount", "Taxable", "GST"]
 
     def __init__(
         self,
@@ -188,6 +189,10 @@ class PurchaseScreen(QWidget):
         # to the item dropdown instead.
         self.qty_input.setFixedWidth(80)
         self.rate_input.setFixedWidth(80)
+        # Optional supplier trade discount for the line; blank means 0.
+        self.discount_input = QLineEdit()
+        self.discount_input.setPlaceholderText("0")
+        self.discount_input.setFixedWidth(60)
         # add_line_button doubles as "Update Line" while editing a line.
         self.add_line_button = QPushButton("Add Line")
         self.add_line_button.clicked.connect(self.on_add_line)
@@ -202,6 +207,8 @@ class PurchaseScreen(QWidget):
         line_form.addWidget(self.qty_input)
         line_form.addWidget(QLabel("Rate"))
         line_form.addWidget(self.rate_input)
+        line_form.addWidget(QLabel("Disc %"))
+        line_form.addWidget(self.discount_input)
         line_form.addWidget(self.add_line_button)
         line_form.addWidget(self.edit_line_button)
 
@@ -213,18 +220,38 @@ class PurchaseScreen(QWidget):
         self.lines_table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
         self.lines_table.doubleClicked.connect(self.on_edit_line)
 
+        # Bill-level flat discount, apportioned across lines before GST by the
+        # service. Blank means 0.
+        self.special_discount_input = QLineEdit()
+        self.special_discount_input.setPlaceholderText("0")
+        self.special_discount_input.setFixedWidth(100)
+        self.special_discount_input.textChanged.connect(self.refresh_lines_table)
+        special_layout = QHBoxLayout()
+        special_layout.addWidget(QLabel("Special Discount (Rs, whole bill)"))
+        special_layout.addWidget(self.special_discount_input)
+        special_layout.addStretch(1)
+
+        # Live totals panel: Gross -> Discount -> Taxable -> GST -> Net.
+        self.gross_label = QLabel("Gross: 0.00")
+        self.discount_label = QLabel("Discount: 0.00")
         self.taxable_label = QLabel("Taxable: 0.00")
         self.cgst_label = QLabel("CGST: 0.00")
         self.sgst_label = QLabel("SGST: 0.00")
         self.igst_label = QLabel("IGST: 0.00")
-        self.total_label = QLabel("Total: 0.00")
+        self.total_label = QLabel("Net Total: 0.00")
 
         totals_layout = QHBoxLayout()
         for label in (
-            self.taxable_label, self.cgst_label, self.sgst_label,
-            self.igst_label, self.total_label,
+            self.gross_label, self.discount_label, self.taxable_label,
+            self.cgst_label, self.sgst_label, self.igst_label, self.total_label,
         ):
             totals_layout.addWidget(label)
+
+        # Shown when the discounts are invalid (e.g. special discount larger
+        # than the bill) — the service rejects the save with the same message.
+        self.discount_error_label = QLabel("")
+        self.discount_error_label.setStyleSheet("color: #b00020;")
+        self.discount_error_label.setWordWrap(True)
 
         self.save_button = QPushButton("Save Purchase")
         self.save_button.clicked.connect(self.on_save_purchase)
@@ -234,7 +261,9 @@ class PurchaseScreen(QWidget):
         layout.addWidget(new_supplier_box)
         layout.addLayout(line_form)
         layout.addWidget(self.lines_table)
+        layout.addLayout(special_layout)
         layout.addLayout(totals_layout)
+        layout.addWidget(self.discount_error_label)
         layout.addWidget(self.save_button)
         self.setLayout(layout)
 
@@ -318,7 +347,15 @@ class PurchaseScreen(QWidget):
             "gst_rate": item_data["gst_rate"],
             "quantity": quantity,
             "rate": rate,
+            "discount_percent": self.discount_input.text().strip(),
         }
+        # Let the service's own rules judge the discount (0-100, numeric) so the
+        # screen never disagrees with what Save will accept.
+        try:
+            calculate_purchase([line], None, None)
+        except ValueError as exc:
+            QMessageBox.warning(self, "Invalid discount", str(exc).replace("line 1", "this line"))
+            return
         if self._editing_line_index is None:
             self.lines.append(line)
         else:
@@ -344,6 +381,7 @@ class PurchaseScreen(QWidget):
                 break
         self.qty_input.setText(str(line["quantity"]))
         self.rate_input.setText(str(line["rate"]))
+        self.discount_input.setText(str(line.get("discount_percent") or ""))
 
         self._editing_line_index = row
         self.add_line_button.setText("Update Line")
@@ -353,41 +391,49 @@ class PurchaseScreen(QWidget):
         self._editing_line_index = None
         self.qty_input.clear()
         self.rate_input.clear()
+        self.discount_input.clear()
         self.add_line_button.setText("Add Line")
 
     def refresh_lines_table(self):
+        """Redraw the grid and the totals panel from PurchaseService's own
+        calculation (calculate_purchase) — the screen does no arithmetic."""
         supplier_data = self.supplier_combo.currentData()
         supplier_state = supplier_data["state"] if supplier_data else None
 
         self.lines_table.setRowCount(len(self.lines))
-        total_taxable = total_cgst = total_sgst = total_igst = Decimal("0")
+        try:
+            priced = calculate_purchase(
+                self.lines, self.special_discount_input.text(), supplier_state
+            )
+            self.discount_error_label.setText("")
+        except ValueError as exc:
+            # Show the problem but keep the lines visible; Save will refuse too.
+            self.discount_error_label.setText(f"⚠ {exc}")
+            priced = None
 
         for row, line in enumerate(self.lines):
-            amount = (line["quantity"] * line["rate"]).quantize(Decimal("0.01"))
-            cgst, sgst, igst = split_gst(amount, line["gst_rate"], supplier_state)
-            gst_amount = cgst + sgst + igst
-
+            p = priced["lines"][row] if priced else None
             values = [
                 f"{line['code']} - {line['name']}",
                 str(line["quantity"]),
                 str(line["rate"]),
-                str(amount),
-                str(gst_amount),
+                str(line.get("discount_percent") or "0"),
+                str(p["discount_amount"] + p["apportioned"]) if p else "-",
+                str(p["taxable"]) if p else "-",
+                str(p["gst_amount"]) if p else "-",
             ]
             for col, value in enumerate(values):
                 self.lines_table.setItem(row, col, QTableWidgetItem(value))
 
-            total_taxable += amount
-            total_cgst += cgst
-            total_sgst += sgst
-            total_igst += igst
-
-        total = total_taxable + total_cgst + total_sgst + total_igst
-        self.taxable_label.setText(f"Taxable: {total_taxable}")
-        self.cgst_label.setText(f"CGST: {total_cgst}")
-        self.sgst_label.setText(f"SGST: {total_sgst}")
-        self.igst_label.setText(f"IGST: {total_igst}")
-        self.total_label.setText(f"Total: {total}")
+        t = priced["totals"] if priced else None
+        zero = Decimal("0.00")
+        self.gross_label.setText(f"Gross: {t['gross'] if t else zero}")
+        self.discount_label.setText(f"Discount: {t['total_discount'] if t else zero}")
+        self.taxable_label.setText(f"Taxable: {t['taxable'] if t else zero}")
+        self.cgst_label.setText(f"CGST: {t['cgst'] if t else zero}")
+        self.sgst_label.setText(f"SGST: {t['sgst'] if t else zero}")
+        self.igst_label.setText(f"IGST: {t['igst'] if t else zero}")
+        self.total_label.setText(f"Net Total: {t['total'] if t else zero}")
 
     def on_save_purchase(self):
         invoice_no = self.invoice_no_input.text().strip()
@@ -405,9 +451,15 @@ class PurchaseScreen(QWidget):
 
         invoice_date = self.date_input.date().toPython()
         line_payload = [
-            {"item_id": line["item_id"], "quantity": line["quantity"], "rate": line["rate"]}
+            {
+                "item_id": line["item_id"],
+                "quantity": line["quantity"],
+                "rate": line["rate"],
+                "discount_percent": line.get("discount_percent"),
+            }
             for line in self.lines
         ]
+        special_discount = self.special_discount_input.text()
         editing = self._editing_invoice_id is not None
 
         try:
@@ -419,6 +471,7 @@ class PurchaseScreen(QWidget):
                     supplier_id=supplier_data["id"],
                     lines=line_payload,
                     modified_by=SessionContext.get_username(),
+                    special_discount=special_discount,
                 )
             else:
                 invoice = self.purchase_service.create_purchase_invoice(
@@ -427,6 +480,7 @@ class PurchaseScreen(QWidget):
                     supplier_id=supplier_data["id"],
                     lines=line_payload,
                     created_by=SessionContext.get_username(),
+                    special_discount=special_discount,
                 )
         except Exception as exc:
             action = "update" if editing else "save"
@@ -443,6 +497,7 @@ class PurchaseScreen(QWidget):
         self.lines = []
         self._reset_line_entry()
         self.invoice_no_input.clear()
+        self.special_discount_input.clear()
         self.refresh_lines_table()
         self.refresh_lookups()
 
@@ -480,9 +535,16 @@ class PurchaseScreen(QWidget):
                 "gst_rate": line["gst_rate"],
                 "quantity": Decimal(str(line["quantity"])),
                 "rate": Decimal(str(line["rate"])),
+                # :g drops a trailing ".0" (10.0 -> "10") without going to
+                # exponent form the way Decimal.normalize() would.
+                "discount_percent": (
+                    f"{line['discount_percent']:g}" if line["discount_percent"] else ""
+                ),
             }
             for line in details["lines"]
         ]
+        special = details["special_discount"]
+        self.special_discount_input.setText(f"{special:.2f}" if special else "")
 
         self._editing_invoice_id = invoice_id
         self._reset_line_entry()
