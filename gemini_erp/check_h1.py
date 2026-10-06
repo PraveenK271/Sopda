@@ -50,6 +50,9 @@ def _write_sales(path, header, rows):
 def main():
     svc = ImportService()
     stamp = datetime.now().strftime("%H%M%S%f")
+    # Sales invoice numbers must obey GST Rule 46(b) (<= 16 chars, v1.2.0), so
+    # they use a shorter per-run reference than the item/party names.
+    ref = stamp[-8:]
     tmp = tempfile.mkdtemp(prefix="h1_")
 
     # A real item so the "valid" rows reference something that exists.
@@ -80,13 +83,13 @@ def main():
     errfile = os.path.join(tmp, "errors.xlsx")
     _write_sales(errfile, SALES_COLS, [
         # row 2: valid
-        [f"INV-{stamp}-A", "05-04-2026", "Cust One", "", "", item_code, 2, 100, 236],
+        [f"I{ref}-A", "05-04-2026", "Cust One", "", "", item_code, 2, 100, 236],
         # row 3: bad date format
-        [f"INV-{stamp}-B", "2026/04/05", "Cust One", "", "", item_code, 1, 100, 118],
+        [f"I{ref}-B", "2026/04/05", "Cust One", "", "", item_code, 1, 100, 118],
         # row 4: zero quantity
-        [f"INV-{stamp}-C", "06-04-2026", "Cust One", "", "", item_code, 0, 100, 0],
+        [f"I{ref}-C", "06-04-2026", "Cust One", "", "", item_code, 0, 100, 0],
         # row 5: unknown item code
-        [f"INV-{stamp}-D", "07-04-2026", "Cust One", "", "", f"NOPE-{stamp}", 1, 100, 118],
+        [f"I{ref}-D", "07-04-2026", "Cust One", "", "", f"NOPE-{stamp}", 1, 100, 118],
     ])
 
     before = _counts()

@@ -7,12 +7,15 @@ so an existing database (or a brand-new one) always has something to print.
 """
 
 import logging
+from datetime import date as date_type
 
 from sqlalchemy import false
 
 from database import get_session
 from models import CompanyProfile
 from reports import company_info
+from services.auth_service import AuthService
+from services.permissions import ROLE_ADMINISTRATOR
 
 logger = logging.getLogger(__name__)
 
@@ -106,6 +109,52 @@ class SettingsService:
         finally:
             session.close()
 
+    # ----- "GST returns filed up to" (patch v1.2.0) -------------------------
+
+    @staticmethod
+    def get_gst_filed_upto_date(session=None) -> date_type | None:
+        """The last date GSTR-1 has been filed for, or None if never set.
+
+        Read by SalesService for the cancel / renumber guards. Pass the
+        caller's session to read inside its transaction.
+        """
+        own = session is None
+        s = session or get_session()
+        try:
+            return ensure_profile(s).gst_filed_upto_date
+        finally:
+            if own:
+                s.close()
+
+    def set_gst_filed_upto_date(self, value: date_type | None, modified_by: str | None) -> None:
+        """Set (or clear, with None) the GST filed-up-to date. Administrator only.
+
+        Not part of update_profile() on purpose: this date is a control —
+        moving it backwards re-opens filed periods to cancellation — so it has
+        its own role check and log line.
+        """
+        if value is not None and not isinstance(value, date_type):
+            raise ValueError("The GST filed-up-to date must be a date.")
+        if value is not None and value > date_type.today():
+            raise ValueError("The GST filed-up-to date cannot be in the future.")
+        session = get_session()
+        try:
+            AuthService.require_role(
+                session, modified_by, (ROLE_ADMINISTRATOR,), "change the GST filed-up-to date"
+            )
+            profile = ensure_profile(session)
+            previous = profile.gst_filed_upto_date
+            profile.gst_filed_upto_date = value
+            profile.modified_by = modified_by
+            session.commit()
+            logger.info("GST filed-up-to date changed %s -> %s by %s", previous, value, modified_by)
+        except Exception:
+            session.rollback()
+            logger.exception("Failed to set GST filed-up-to date")
+            raise
+        finally:
+            session.close()
+
     @staticmethod
     def _terms_to_text(terms) -> str:
         if isinstance(terms, str):
@@ -128,4 +177,5 @@ class SettingsService:
             "bank_branch": profile.bank_branch,
             "terms": [line for line in terms_text.splitlines() if line.strip()],
             "logo_path": profile.logo_path,
+            "gst_filed_upto_date": profile.gst_filed_upto_date,
         }

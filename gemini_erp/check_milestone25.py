@@ -48,7 +48,7 @@ def _create_sale() -> int:
         address="Test Address",
     )
     invoice = SalesService().create_invoice(
-        invoice_no=f"CHK-M25-INV-{stamp}",
+        invoice_no=f"M25I-{stamp}",  # <= 16 chars (GST Rule 46(b))
         invoice_date=date.today(),
         customer_id=customer.id,
         lines=[{"item_id": item.id, "quantity": 2, "rate": 100}],

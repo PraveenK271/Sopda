@@ -1,7 +1,10 @@
 // Service worker: cache the app shell so the PWA loads offline. API responses
 // are always fetched from the network (never cached — they are dynamic and
 // auth-scoped).
-const CACHE = "gemini-pwa-v1";
+// Bump on every app-shell change: the shell is served cache-first, so a new
+// name is what makes installed phones fetch the new files (v2: v1.2.0
+// cancelled-invoice marking).
+const CACHE = "gemini-pwa-v2";
 const SHELL = [
   "/",
   "/index.html",

@@ -16,7 +16,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
-from create_db import initialize_database
+from create_db import create_tables, seed_database
 from database import get_app_root, get_session
 from services.auth_service import AuthService
 from services.backup_service import BackupService
@@ -54,6 +54,7 @@ from ui.outstanding import OutstandingScreen
 from ui.profit_and_loss import ProfitAndLossScreen
 from ui.purchase import PurchaseScreen
 from ui.purchase_log import PurchaseLogScreen
+from ui.invoice_audit import CancelledInvoicesScreen, SequenceCheckScreen
 from ui.sales_log import SalesLogScreen
 from ui.settings import SettingsScreen
 from ui.trial_balance import TrialBalanceScreen
@@ -109,8 +110,19 @@ class MainWindow(QMainWindow):
 
         if self._can(user, MODULE_SALES_LOG):
             self.sales_log_screen = SalesLogScreen()
-            self.tabs.addTab(self.sales_log_screen, "Sales Log")
+            # v1.2.0: the audit views sit beside the invoice list.
+            self.cancelled_invoices_screen = CancelledInvoicesScreen()
+            self.sequence_check_screen = SequenceCheckScreen()
+            self.sales_log_tabs = QTabWidget()
+            self.sales_log_tabs.addTab(self.sales_log_screen, "Invoices")
+            self.sales_log_tabs.addTab(self.cancelled_invoices_screen, "Cancelled Invoices")
+            self.sales_log_tabs.addTab(self.sequence_check_screen, "Sequence Check")
+            self.tabs.addTab(self.sales_log_tabs, "Sales Log")
             self._refreshers.append(self.sales_log_screen.refresh_invoices)
+            self._refreshers.append(self.cancelled_invoices_screen.refresh)
+            self._refreshers.append(self.sequence_check_screen.refresh)
+            # A cancellation moves stock and every report: refresh them all.
+            self.sales_log_screen.invoices_changed.connect(self.on_tab_changed)
             # Editing a saved invoice reuses the Billing screen. The Edit button
             # itself only exists for roles allowed to edit (SalesLogScreen).
             if self._can(user, MODULE_BILLING):
@@ -242,12 +254,15 @@ def _bootstrap() -> None:
 
     On a clean machine (packaged first run) there is no db and no documents/
     folder; the first screen would query missing tables and crash. Both are
-    created here, idempotently, so an existing install is untouched. This also
-    seeds roles + the default admin (ensure_roles_and_admin, via
-    initialize_database).
+    created here, idempotently, so an existing install is untouched.
+
+    Tables only — seeding (roles + default admin, system accounts, company
+    profile) is seed_database(), which must run AFTER the numbered migrations:
+    its ORM queries select every mapped column, including ones a pending
+    migration has not added yet.
     """
     os.makedirs(os.path.join(get_app_root(), "documents"), exist_ok=True)
-    initialize_database()
+    create_tables()
 
 
 def _prepare_database(app: QApplication) -> bool:
@@ -257,12 +272,14 @@ def _prepare_database(app: QApplication) -> bool:
       1. read-only check for pending migrations
       2. if any, show a modal "please wait" and — for an EXISTING database —
          take the automatic backup FIRST. This is deliberately before
-         _bootstrap: initialize_database() already writes (create_all adds the
-         new tables, seeds add the new ledger account), so a backup taken after
-         it would not be a true pre-patch copy. A brand-new database has
-         nothing to back up.
-      3. _bootstrap(): create_all + seeds, incl. ensure_roles_and_admin()
-      4. run the pending migrations
+         _bootstrap: create_all and seeding both write (new tables, new ledger
+         accounts), so a backup taken after them would not be a true
+         pre-patch copy. A brand-new database has nothing to back up.
+      3. _bootstrap(): create_all (missing tables only)
+      4. run the pending migrations (missing columns)
+      5. seed_database(): system accounts, company profile, roles + admin
+         (ensure_roles_and_admin) — last, because seeding reads tables whose
+         columns step 4 may have just added (v1.2.0: company_profile)
     A failed backup means nothing is touched; a failed migration means the app
     does not open half-migrated. Either way the user is told why (and where the
     backup is) and the app exits (returns False).
@@ -273,6 +290,7 @@ def _prepare_database(app: QApplication) -> bool:
         pending = service.get_pending_migrations(session)
         if not pending:
             _bootstrap()
+            seed_database()
             return True
         existing_install = service.has_existing_data()
 
@@ -306,6 +324,7 @@ def _prepare_database(app: QApplication) -> bool:
         try:
             _bootstrap()
             applied = service.run_pending(session, applied_by="system")
+            seed_database()
         except Exception as exc:
             wait.close()
             logging.getLogger(__name__).exception("Database update failed")

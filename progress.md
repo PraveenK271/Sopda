@@ -908,3 +908,128 @@ First release that patches a LIVE database. `APP_VERSION = "1.1.0"` in
   confirm the treatment before this is changed.
 - The FastAPI companion does not migrate the database: launch the desktop app
   once after updating, before starting the API.
+
+---
+
+## Patch v1.2.0 — 2026-10-06 (see INSTRUCTIONS_PATCH_V1_2.md, CHECKLIST_PATCH_V1_2.md)
+
+Requires the v1.1.0 migration framework; numbering continues at m004.
+`APP_VERSION = "1.2.0"`; `installer.iss` bumped to 1.2.0.
+
+### D1 — Cancel a sales invoice — DONE
+- Migration 004: `sales_invoices.status` NOT NULL DEFAULT 'ACTIVE' (every
+  pre-patch invoice becomes ACTIVE), `cancelled_date`, `cancelled_by`,
+  `cancellation_reason`; `sales_invoice_audit.action` NOT NULL DEFAULT 'EDIT'
+  (v1.1.0 audit rows labelled with no backfill);
+  `company_profile.gst_filed_upto_date`.
+- `SalesService.cancel_invoice()` — ONE transaction: guards, before snapshot,
+  reversing IN per OUT stock row not yet reversed + reversing journal per
+  un-reversed entry (`SALE_CANCELLATION`, dated like the originals, through
+  `post_journal_entry`), flag `is_reversed`, status CANCELLED, lines NOT
+  soft-deleted, audit row action CANCEL. The reversal step is now one shared
+  `_reverse_postings()` used by edit and cancel, so an invoice edited under
+  v1.1.0 and then cancelled reverses only the lines in force.
+  `preview_cancellation()` runs every check without writing.
+- Guards: already cancelled; dated on/before the GST filed-up-to date
+  (warns while never set); locked period; empty reason; Administrator only
+  (`AuthService.require_role`, in the service). A cancelled invoice is
+  read-only (`update_invoice` refuses it). Its number stays used — the
+  UNIQUE constraint covers cancelled rows.
+- Receipt warning: receipts are recorded against the CUSTOMER, so the warning
+  reads the customer's ledger — it names the credit balance the cancellation
+  will leave (e.g. "credit balance of Rs 500.00"), or says other invoices
+  still cover what was received. Warns, never blocks.
+- UI: Sales Log "Cancel Invoice" (Administrator only) — the dialog states what
+  will happen and enables OK only once the invoice number is typed back and a
+  reason given; afterwards it offers the PDF, which now carries a diagonal
+  CANCELLED watermark and a "CANCELLED on … — reason" line.
+- `check_d1.py` PASS (stock, books, dates, edit-then-cancel = 100, every
+  guard, receipt warning, audit, byte-for-byte rollback).
+
+### D2 — Correct a wrong invoice number — DONE
+- `SalesService.correct_invoice_number()` — ONE transaction: guards, new
+  number, journal NARRATIONS rewritten where they name the old number
+  (bounded: "INV1" never matches inside "INV10"), audit row action
+  NUMBER_CORRECTION. No stock rows touched; journal amounts/dates unchanged;
+  `edit_count` unchanged (a correction is not an edit).
+- Guards: invoice ACTIVE; new number unused — cancelled invoices included,
+  case-insensitive (matches SQL Server's default collation); not in a filed GST
+  period; not in a locked period; reason; Administrator only; same format rule
+  as a new invoice.
+- **New shared rule `validate_invoice_no()` (GST Rule 46(b))**: at most 16
+  characters of letters, digits, `-` and `/`. Applied to new invoices, number
+  corrections and the historical sales import's VALIDATE step. Existing
+  invoices are not re-validated. Older checks whose fixture invoice numbers
+  were 18–24 characters (check_h1/h3/h5/h6, check_milestone18/25/27/28) were
+  shortened; nothing else in them changed.
+- UI: "Correct Invoice Number" beside Edit (Administrator only); old number
+  read-only beside the new one; offers the PDF under the corrected number.
+- `check_d2.py` PASS.
+
+### D3 — Cancellation visible everywhere — DONE
+Audit of every `sales_invoices` reader (one at a time):
+| Reader | Decision |
+|---|---|
+| `GstReportService._line_rows` (Sales Register, HSN summary) | ACTIVE only |
+| `get_gstr1_summary` (B2B, B2C) | ACTIVE only; cancelled listed under `cancelled` |
+| `_invoice_tax_totals` (GSTR-3B outward) | ACTIVE only (purchase side untouched) |
+| `SalesService.list_invoices` (Sales Log, PWA recent invoices) | all, each with `status`; `include_cancelled=False` for sums |
+| API dashboard "sales today" | ACTIVE only |
+| `import_service` duplicate-number check | all rows — a cancelled number is never reused (deliberate) |
+| `invoice_pdf` | single document; CANCELLED watermark |
+| AccountingService (TB, P&L, BS, ledgers, outstanding, day book) and stock | no change — self-correct through the reversing rows |
+- Item-wise / customer-wise sales reports do not exist in the app, so there
+  was nothing to filter there.
+- Sales Register screen + its Excel export: a struck-through "CANCELLED
+  INVOICES — not included in the totals" section under the active rows.
+  GSTR-1 screen: a labelled "Cancelled invoices" table.
+- Sales Log: Status column, cancelled rows greyed and struck through, "Show
+  cancelled invoices" filter (on by default), Edit/Cancel/Correct disabled on
+  a cancelled row. Edit History shows the action of each row.
+- New (Sales Log sub-tabs): **Cancelled Invoices** (Excel + PDF) and **Invoice
+  Sequence Check** (Excel). The sequence check splits each number into digit
+  runs: numbers of the same shape form a family; the run that varies most is
+  the serial; the other runs (e.g. a "2026-2027" suffix) separate series.
+  Cancelled numbers count as present, so proper use reports no gaps.
+- PWA: a cancelled invoice is labelled and its amount struck through; the
+  service-worker cache bumped to `gemini-pwa-v2` so installed phones fetch the
+  new script.
+- `check_d3.py` PASS.
+
+### D4 — Settings, docs, release
+- Settings: "GST returns" box — "GSTR-1 has been filed up to" date + Save,
+  the one-line explanation, and a prompt while it is unset.
+  `SettingsService.set_gst_filed_upto_date()` is Administrator-only in the
+  service and refuses a future date. Stored as a `Date` (the patch text said
+  DateTime; every business date in the app is a Date, and it is compared
+  with invoice dates).
+- **Found and fixed — startup order.** v1.1.0 ran seeding before migrations.
+  Seeding's `ensure_profile()` is an ORM query that selects every mapped
+  column, so on a v1.1.0 database it hit `company_profile.gst_filed_upto_date`
+  before migration 004 could add it: every v1.1.0 → v1.2.0 upgrade would have
+  failed on first launch ("no such column", reproduced). `initialize_database`
+  is split into `create_tables()` + `seed_database()`; startup is now backup →
+  `create_tables()` → migrations → `seed_database()`.
+- `check_v12_ui.py` (offscreen) PASS. `check_upgrade_path.py` generalised (any
+  earlier version; expects exactly the migrations the source lacks; proves
+  every pre-patch invoice is ACTIVE and in every report; then edits, renumbers
+  and cancels). PASS from the v1.0 dev db AND from a v1.1.0-era database built
+  by the v1.1.0 code (commit 7726415) with an invoice edited twice — that one
+  was then cancelled and stock came back exactly.
+- `check_patch_ui.py` no longer hard-codes the migration list / version.
+
+### Known limitations of v1.2.0
+- No sales-side credit note yet, so an invoice in a filed GST period still
+  cannot be voided in the software (blocked by design).
+- Purchase invoices still cannot be cancelled, and their edit is not yet on
+  the reverse-and-re-post design.
+- Receipts and payments cannot be reversed, so a cancellation with money
+  against it leaves a customer credit balance to be settled by hand.
+- Editing (v1.1.0) is still only WARNED for an earlier month — it does not use
+  the new GST filed-up-to date. Worth deciding whether edit should be blocked
+  in filed periods too.
+- e-invoicing: if the business is above the e-invoice threshold, a
+  cancellation here must also be done on the IRP within 24 hours — the app
+  does not talk to the IRP.
+- `RELEASE_PROCESS.md` and `UPDATE_INSTRUCTIONS.txt`, named by the patch
+  instructions, do not exist in the repository.

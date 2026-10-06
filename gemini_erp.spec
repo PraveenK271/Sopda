@@ -36,6 +36,7 @@ hiddenimports = (
         "migrations.m001_purchase_discounts",
         "migrations.m002_sales_invoice_audit",
         "migrations.m003_supplier_credit_notes",
+        "migrations.m004_invoice_cancellation",
     ]
 )
 

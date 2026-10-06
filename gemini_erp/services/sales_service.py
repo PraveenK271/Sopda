@@ -8,10 +8,18 @@ update_invoice() (patch v1.1.0, P3) edits a saved invoice by REVERSING its
 stock movements and journal entries and RE-POSTING the new ones — nothing is
 deleted. See its docstring for why this is the design, and do not "optimise"
 it into a diff of old vs new lines.
+
+cancel_invoice() (patch v1.2.0, D1) voids a sale the same way — reversing
+entries, no re-post — and marks the invoice CANCELLED. It is never a delete:
+the number stays used (GST Rule 46(b): the serial stays consecutive, cancelled
+invoices are listed in GSTR-1, not erased) and the lines stay readable.
+correct_invoice_number() (D2) fixes a mistyped number: a label change only,
+no stock or accounting movement.
 """
 
 import json
 import logging
+import re
 from datetime import date as date_type
 from datetime import datetime
 from decimal import ROUND_HALF_UP, Decimal
@@ -28,12 +36,13 @@ from models import (
     SalesInvoiceAudit,
     SalesInvoiceItem,
     StockTransaction,
-    User,
 )
 from services.accounting_service import AccountingService
+from services.auth_service import AuthService
 from services.gst_service import split_gst
 from services.period_lock_service import PeriodLockService
 from services.permissions import ROLE_ACCOUNTANT, ROLE_ADMINISTRATOR
+from services.settings_service import SettingsService
 
 logger = logging.getLogger(__name__)
 
@@ -41,13 +50,59 @@ logger = logging.getLogger(__name__)
 REF_SALE = "SALE"
 # Both the reversing stock rows and the reversing journal entry of an edit.
 REF_SALE_EDIT_REVERSAL = "SALE_EDIT_REVERSAL"
+# Both the reversing stock rows and the reversing journal entry of a cancellation.
+REF_SALE_CANCELLATION = "SALE_CANCELLATION"
+
+# sales_invoices.status
+STATUS_ACTIVE = "ACTIVE"
+STATUS_CANCELLED = "CANCELLED"
+
+# sales_invoice_audit.action
+ACTION_EDIT = "EDIT"
+ACTION_CANCEL = "CANCEL"
+ACTION_NUMBER_CORRECTION = "NUMBER_CORRECTION"
 
 # Only these roles may edit a saved invoice (enforced here, not just in the UI).
 INVOICE_EDIT_ROLES = (ROLE_ADMINISTRATOR, ROLE_ACCOUNTANT)
+# Cancelling and renumbering are stricter: Administrator only.
+INVOICE_CANCEL_ROLES = (ROLE_ADMINISTRATOR,)
 
 NO_LINES_MESSAGE = (
-    "An invoice must have at least one item. To cancel this invoice, issue a credit note."
+    "An invoice must have at least one item. To void the whole sale, cancel the "
+    "invoice instead."
 )
+GST_FILED_MESSAGE = (
+    "GSTR-1 for this period has been filed (GST returns are filed up to {upto}). "
+    "Issue a credit note instead of {verb}."
+)
+
+# GST Rule 46(b): a consecutive serial number of up to 16 characters, made of
+# letters, digits, hyphen "-" and slash "/".
+INVOICE_NO_MAX_LENGTH = 16
+_INVOICE_NO_PATTERN = re.compile(r"^[A-Za-z0-9/-]+$")
+
+
+def validate_invoice_no(invoice_no) -> str:
+    """Return the cleaned invoice number or raise ValueError.
+
+    One rule for every way a number enters the system — a new invoice, a
+    number correction, and the historical import — so a correction can never
+    produce a number a new invoice would not have been allowed to have.
+    """
+    cleaned = (invoice_no or "").strip()
+    if not cleaned:
+        raise ValueError("The invoice number is required.")
+    if len(cleaned) > INVOICE_NO_MAX_LENGTH:
+        raise ValueError(
+            f"Invoice number '{cleaned}' is {len(cleaned)} characters; GST allows at most "
+            f"{INVOICE_NO_MAX_LENGTH}."
+        )
+    if not _INVOICE_NO_PATTERN.match(cleaned):
+        raise ValueError(
+            f"Invoice number '{cleaned}' may contain only letters, digits, '-' and '/' "
+            "(GST Rule 46(b))."
+        )
+    return cleaned
 
 
 class InvoiceEditPermissionError(PermissionError):
@@ -68,6 +123,7 @@ class SalesService:
         """lines: list of {"item_id": int, "quantity": Decimal-like, "rate": Decimal-like}."""
         if not lines:
             raise ValueError("An invoice must have at least one line item")
+        invoice_no = validate_invoice_no(invoice_no)
         PeriodLockService().check_not_locked(invoice_date)
 
         session = get_session()
@@ -237,6 +293,14 @@ class SalesService:
             user is not None and user.role is not None and user.role.name in INVOICE_EDIT_ROLES
         )
 
+    @staticmethod
+    def user_can_cancel_invoices(user) -> bool:
+        """Whether a user's role may cancel or renumber saved invoices
+        (Administrator only). For the UI; the service enforces it again."""
+        return bool(
+            user is not None and user.role is not None and user.role.name in INVOICE_CANCEL_ROLES
+        )
+
     def preview_invoice_edit(
         self, invoice_id: int, new_data: dict, reason: str, modified_by: str | None
     ) -> list[str]:
@@ -300,67 +364,11 @@ class SalesService:
 
             before = self._snapshot(invoice)
 
-            # 4. reverse the stock rows not already reversed — one IN per row.
-            out_rows = (
-                session.query(StockTransaction)
-                .filter(
-                    StockTransaction.reference_type == REF_SALE,
-                    StockTransaction.reference_id == invoice.id,
-                    StockTransaction.type == "OUT",
-                    StockTransaction.is_reversed == false(),
-                    StockTransaction.is_deleted == false(),
-                )
-                .order_by(StockTransaction.id)
-                .all()
+            # 4-5. reverse every stock row and journal entry not yet reversed.
+            self._reverse_postings(
+                session, invoice, REF_SALE_EDIT_REVERSAL,
+                f"edit of Sales Invoice {invoice.invoice_no}", modified_by,
             )
-            for row in out_rows:
-                # No active-item check here: an item soft-deleted from the
-                # master since the sale must still get its stock back.
-                session.add(
-                    StockTransaction(
-                        item_id=row.item_id,
-                        type="IN",
-                        quantity=row.quantity,
-                        reference_type=REF_SALE_EDIT_REVERSAL,
-                        reference_id=invoice.id,
-                        # Dated like the row it cancels (the invoice's date),
-                        # not today, so the stock ledger reads right by period.
-                        date=row.date,
-                        created_by=modified_by,
-                    )
-                )
-                row.is_reversed = True
-                row.modified_by = modified_by
-
-            # 5. reverse the journal entries not already reversed.
-            entries = (
-                session.query(JournalEntry)
-                .filter(
-                    JournalEntry.reference_type == REF_SALE,
-                    JournalEntry.reference_id == invoice.id,
-                    JournalEntry.is_reversed == false(),
-                    JournalEntry.is_deleted == false(),
-                )
-                .order_by(JournalEntry.id)
-                .all()
-            )
-            for entry in entries:
-                AccountingService.post_journal_entry(
-                    session,
-                    date=entry.date,
-                    reference_type=REF_SALE_EDIT_REVERSAL,
-                    reference_id=invoice.id,
-                    lines=[
-                        {"account_id": jl.account_id, "debit": jl.credit, "credit": jl.debit}
-                        for jl in entry.lines
-                        if not jl.is_deleted
-                    ],
-                    narration=f"Reversal of journal #{entry.id} — edit of Sales Invoice "
-                              f"{invoice.invoice_no}",
-                    created_by=modified_by,
-                )
-                entry.is_reversed = True
-                entry.modified_by = modified_by
 
             # 6. soft-delete the old lines.
             for line in invoice.items:
@@ -392,6 +400,7 @@ class SalesService:
                     reason=reason.strip(),
                     before_snapshot=json.dumps(before),
                     after_snapshot=json.dumps(self._snapshot(invoice)),
+                    action=ACTION_EDIT,
                     created_by=modified_by,
                 )
             )
@@ -416,20 +425,115 @@ class SalesService:
 
     @staticmethod
     def _load_editable_invoice(session, invoice_id: int) -> SalesInvoice:
+        """The invoice, if it may still be changed. A cancelled invoice is
+        read-only: it may not be edited, re-cancelled or renumbered."""
         invoice = session.get(SalesInvoice, invoice_id)
         if invoice is None or invoice.is_deleted:
             raise ValueError(f"Invoice {invoice_id} not found")
+        if invoice.status == STATUS_CANCELLED:
+            raise ValueError(
+                f"Invoice {invoice.invoice_no} is already cancelled. A cancelled invoice "
+                "is read-only and cannot be edited, cancelled again or renumbered."
+            )
         return invoice
+
+    @staticmethod
+    def _reverse_postings(session, invoice, reversal_ref_type: str, reason_text: str, user) -> None:
+        """Post reversing entries for every stock row and journal entry of this
+        invoice that is still in force, and flag each original is_reversed.
+
+        Shared by edit and cancel. Per STOCK ROW, never grouped by item (one
+        item can be on two lines). Only rows with is_reversed False — so a row
+        superseded by an earlier edit is never reversed a second time (the
+        "second-edit trap"). Reversals are dated like the rows they cancel
+        (the invoice date), not today, so the stock ledger and the period P&L
+        read correctly. Never commits.
+        """
+        out_rows = (
+            session.query(StockTransaction)
+            .filter(
+                StockTransaction.reference_type == REF_SALE,
+                StockTransaction.reference_id == invoice.id,
+                StockTransaction.type == "OUT",
+                StockTransaction.is_reversed == false(),
+                StockTransaction.is_deleted == false(),
+            )
+            .order_by(StockTransaction.id)
+            .all()
+        )
+        for row in out_rows:
+            # No active-item check: an item soft-deleted from the master since
+            # the sale must still get its stock back.
+            session.add(
+                StockTransaction(
+                    item_id=row.item_id,
+                    type="IN",
+                    quantity=row.quantity,
+                    reference_type=reversal_ref_type,
+                    reference_id=invoice.id,
+                    date=row.date,
+                    created_by=user,
+                )
+            )
+            row.is_reversed = True
+            row.modified_by = user
+
+        entries = (
+            session.query(JournalEntry)
+            .filter(
+                JournalEntry.reference_type == REF_SALE,
+                JournalEntry.reference_id == invoice.id,
+                JournalEntry.is_reversed == false(),
+                JournalEntry.is_deleted == false(),
+            )
+            .order_by(JournalEntry.id)
+            .all()
+        )
+        for entry in entries:
+            # post_journal_entry refuses an unbalanced entry — never bypass it.
+            AccountingService.post_journal_entry(
+                session,
+                date=entry.date,
+                reference_type=reversal_ref_type,
+                reference_id=invoice.id,
+                lines=[
+                    {"account_id": jl.account_id, "debit": jl.credit, "credit": jl.debit}
+                    for jl in entry.lines
+                    if not jl.is_deleted
+                ],
+                narration=f"Reversal of journal #{entry.id} — {reason_text}",
+                created_by=user,
+            )
+            entry.is_reversed = True
+            entry.modified_by = user
+
+    @staticmethod
+    def _gst_filed_check(session, invoice_date, verb: str) -> str | None:
+        """Block an action on an invoice in a period whose GSTR-1 is filed.
+
+        Raises when the invoice is dated on or before the "GST returns filed up
+        to" date. When that date has never been set, returns a warning instead
+        — the software cannot know what was filed, so the user must confirm.
+        """
+        filed_upto = SettingsService.get_gst_filed_upto_date(session)
+        if filed_upto is None:
+            return (
+                "The 'GST returns filed up to' date has never been set (Settings), so the "
+                f"software cannot check this. Confirm GSTR-1 for "
+                f"{invoice_date.strftime('%B %Y')} has NOT been filed before {verb} — "
+                "once filed, the correct route is a credit note."
+            )
+        if invoice_date <= filed_upto:
+            raise ValueError(
+                GST_FILED_MESSAGE.format(upto=filed_upto.strftime("%d-%m-%Y"), verb=verb)
+            )
+        return None
 
     def _check_edit(self, session, invoice, new_data, reason, modified_by) -> list[str]:
         """Blocking checks (raise) then warnings (returned). Writes nothing."""
-        user = (
-            session.query(User)
-            .filter(User.username == (modified_by or ""), User.is_deleted == false())
-            .first()
-        )
-        if user is None or not user.is_active or user.role is None \
-                or user.role.name not in INVOICE_EDIT_ROLES:
+        try:
+            AuthService.require_role(session, modified_by, INVOICE_EDIT_ROLES, "edit a saved invoice")
+        except PermissionError:
             raise InvoiceEditPermissionError(
                 "Only an Administrator or Accountant can edit a saved invoice."
             )
@@ -508,6 +612,7 @@ class SalesService:
         """The invoice as a JSON-safe dict: header and ACTIVE lines only."""
         return {
             "invoice_no": invoice.invoice_no,
+            "status": invoice.status,
             "date": invoice.date.isoformat(),
             "customer_id": invoice.customer_id,
             "customer_name": invoice.customer.name,
@@ -530,9 +635,332 @@ class SalesService:
             ],
         }
 
+    # ----- cancel a saved invoice (patch v1.2.0, D1) ----------------------
+
+    def preview_cancellation(self, invoice_id: int, reason: str, cancelled_by: str | None) -> list[str]:
+        """Every cancellation check WITHOUT writing: raises for anything that
+        blocks, returns the warnings the user must confirm first."""
+        session = get_session()
+        try:
+            invoice = self._load_editable_invoice(session, invoice_id)
+            return self._check_cancel(session, invoice, reason, cancelled_by)
+        finally:
+            session.close()
+
+    def cancel_invoice(self, invoice_id: int, reason: str, cancelled_by: str | None) -> SalesInvoice:
+        """Cancel (void) a saved sales invoice. Never a delete.
+
+        All in ONE transaction:
+          1. load + every guard (_check_cancel) — before any write
+          2. snapshot the invoice as it was
+          3-4. reverse every stock row and journal entry still in force
+               (_reverse_postings, ref SALE_CANCELLATION, dated like the
+               originals). Because only rows with is_reversed False are
+               reversed, an invoice edited earlier reverses just the lines in
+               force now — not the superseded ones.
+          5. status CANCELLED + who/when/why
+          6. the line items are NOT soft-deleted — the invoice stays fully
+             readable, so an auditor asking about it sees what it contained
+          7. audit row, action CANCEL, both snapshots
+          8. commit — or roll ALL of it back
+        The number stays consumed: the UNIQUE(invoice_no) constraint covers
+        cancelled rows too, so it can never be reused.
+
+        Returns the invoice with the confirmed ``cancel_warnings`` attached.
+        """
+        session = get_session()
+        try:
+            invoice = self._load_editable_invoice(session, invoice_id)
+            warnings = self._check_cancel(session, invoice, reason, cancelled_by)
+            before = self._snapshot(invoice)
+
+            self._reverse_postings(
+                session, invoice, REF_SALE_CANCELLATION,
+                f"cancellation of Sales Invoice {invoice.invoice_no}", cancelled_by,
+            )
+
+            now = datetime.utcnow()
+            invoice.status = STATUS_CANCELLED
+            invoice.cancelled_date = now
+            invoice.cancelled_by = cancelled_by
+            invoice.cancellation_reason = reason.strip()[:500]
+            invoice.modified_by = cancelled_by
+            session.flush()
+
+            session.add(
+                SalesInvoiceAudit(
+                    invoice_id=invoice.id,
+                    action=ACTION_CANCEL,
+                    edited_by=cancelled_by,
+                    edited_date=now,
+                    reason=reason.strip()[:500],
+                    before_snapshot=json.dumps(before),
+                    after_snapshot=json.dumps(self._snapshot(invoice)),
+                    created_by=cancelled_by,
+                )
+            )
+
+            session.commit()
+            session.refresh(invoice)
+            invoice.cancel_warnings = warnings
+            logger.info(
+                "Cancelled invoice %s by %s: %s", invoice.invoice_no, cancelled_by, reason.strip()
+            )
+            return invoice
+        except Exception:
+            session.rollback()
+            logger.exception("Failed to cancel invoice %s", invoice_id)
+            raise
+        finally:
+            session.close()
+
+    def _check_cancel(self, session, invoice, reason, cancelled_by) -> list[str]:
+        """Blocking checks (raise) then warnings (returned). Writes nothing.
+        (Already-cancelled is refused by _load_editable_invoice.)"""
+        AuthService.require_role(session, cancelled_by, INVOICE_CANCEL_ROLES, "cancel an invoice")
+        if not reason or not reason.strip():
+            raise ValueError("A reason for the cancellation is required.")
+
+        warnings = []
+        gst_warning = self._gst_filed_check(session, invoice.date, "cancelling")
+        if gst_warning:
+            warnings.append(gst_warning)
+        PeriodLockService().check_not_locked(invoice.date)
+
+        # Receipts are recorded against the customer, not a specific invoice,
+        # so "money against this invoice" is judged from the customer's ledger:
+        # what it will read once this invoice's debit is reversed.
+        received = self._receipts_since(session, invoice.customer_id, invoice.date)
+        if received > 0:
+            ledger = invoice.customer.ledger_account
+            balance_after = (
+                AccountingService.get_account_balance(session, ledger.id) - float(invoice.total)
+                if ledger is not None else 0.0
+            )
+            if balance_after < -0.005:
+                warnings.append(
+                    f"Rs {-balance_after:,.2f} received from {invoice.customer.name} is not "
+                    f"covered by their other invoices. Cancelling this invoice will leave the "
+                    f"customer with a credit balance of Rs {-balance_after:,.2f}, to be refunded "
+                    "or set against a future sale."
+                )
+            else:
+                warnings.append(
+                    f"Receipts of Rs {received:,.2f} have been recorded from "
+                    f"{invoice.customer.name} since this invoice was dated. Their other invoices "
+                    "still cover what was received, so no credit balance will arise — but check "
+                    "the receipt was not meant for this invoice."
+                )
+        return warnings
+
+    @staticmethod
+    def _receipts_since(session, customer_id: int, since) -> float:
+        received = (
+            session.query(func.coalesce(func.sum(Receipt.amount), 0))
+            .filter(
+                Receipt.customer_id == customer_id,
+                Receipt.date >= since,
+                Receipt.is_deleted == false(),
+            )
+            .scalar()
+        )
+        return float(received or 0)
+
+    # ----- correct a mistyped invoice number (patch v1.2.0, D2) ------------
+
+    def preview_number_correction(
+        self, invoice_id: int, new_invoice_no: str, reason: str, modified_by: str | None
+    ) -> list[str]:
+        """Every number-correction check WITHOUT writing; returns warnings."""
+        session = get_session()
+        try:
+            invoice = self._load_editable_invoice(session, invoice_id)
+            _new_no, warnings = self._check_number_correction(
+                session, invoice, new_invoice_no, reason, modified_by
+            )
+            return warnings
+        finally:
+            session.close()
+
+    def correct_invoice_number(
+        self, invoice_id: int, new_invoice_no: str, reason: str, modified_by: str | None
+    ) -> SalesInvoice:
+        """Fix a mistyped invoice number. ONE transaction; a label change only.
+
+        Nothing about stock or accounting changes: no stock rows are written
+        or touched, and journal amounts and dates are untouched. Only the
+        NARRATION of this invoice's journal entries is rewritten where it
+        names the old number, so the Day Book and ledgers read correctly.
+        Audit row action NUMBER_CORRECTION with both snapshots.
+
+        The cleaner fix for a typo than cancel + re-enter, which would leave a
+        cancelled invoice under a number that never existed in the bill book.
+        """
+        session = get_session()
+        try:
+            invoice = self._load_editable_invoice(session, invoice_id)
+            new_no, warnings = self._check_number_correction(
+                session, invoice, new_invoice_no, reason, modified_by
+            )
+            before = self._snapshot(invoice)
+            old_no = invoice.invoice_no
+
+            invoice.invoice_no = new_no
+            invoice.modified_by = modified_by
+
+            # Rewrite "Sales Invoice <old>" in the narrations of every journal
+            # entry tied to this invoice (the sale, and any edit reversals).
+            # Bounded so "INV1" never matches inside "INV10".
+            pattern = re.compile(r"(Sales Invoice )" + re.escape(old_no) + r"(?![A-Za-z0-9/-])")
+            entries = (
+                session.query(JournalEntry)
+                .filter(
+                    JournalEntry.reference_id == invoice.id,
+                    JournalEntry.reference_type.in_(
+                        [REF_SALE, REF_SALE_EDIT_REVERSAL, REF_SALE_CANCELLATION]
+                    ),
+                    JournalEntry.is_deleted == false(),
+                )
+                .all()
+            )
+            for entry in entries:
+                if entry.narration:
+                    updated = pattern.sub(lambda m: m.group(1) + new_no, entry.narration)
+                    if updated != entry.narration:
+                        entry.narration = updated[:300]
+                        entry.modified_by = modified_by
+
+            session.flush()
+            session.add(
+                SalesInvoiceAudit(
+                    invoice_id=invoice.id,
+                    action=ACTION_NUMBER_CORRECTION,
+                    edited_by=modified_by,
+                    edited_date=datetime.utcnow(),
+                    reason=reason.strip()[:500],
+                    before_snapshot=json.dumps(before),
+                    after_snapshot=json.dumps(self._snapshot(invoice)),
+                    created_by=modified_by,
+                )
+            )
+            session.commit()
+            session.refresh(invoice)
+            invoice.correction_warnings = warnings
+            logger.info(
+                "Invoice number corrected %s -> %s by %s: %s",
+                old_no, new_no, modified_by, reason.strip(),
+            )
+            return invoice
+        except IntegrityError:
+            session.rollback()
+            raise ValueError(
+                f"Invoice number '{new_invoice_no}' is already used. Please use a different number."
+            )
+        except Exception:
+            session.rollback()
+            logger.exception("Failed to correct the number of invoice %s", invoice_id)
+            raise
+        finally:
+            session.close()
+
+    def _check_number_correction(self, session, invoice, new_invoice_no, reason, modified_by):
+        """Blocking checks (raise) then warnings. Returns (clean number, warnings)."""
+        AuthService.require_role(
+            session, modified_by, INVOICE_CANCEL_ROLES, "correct an invoice number"
+        )
+        if not reason or not reason.strip():
+            raise ValueError("A reason for the correction is required.")
+        new_no = validate_invoice_no(new_invoice_no)
+        if new_no == invoice.invoice_no:
+            raise ValueError("The new invoice number is the same as the current one.")
+        # Every invoice counts, CANCELLED ones included: a cancelled number is
+        # consumed for good. Case-insensitive, matching SQL Server's default
+        # collation, so the check behaves the same on both backends.
+        clash = (
+            session.query(SalesInvoice.invoice_no, SalesInvoice.status)
+            .filter(
+                func.upper(SalesInvoice.invoice_no) == new_no.upper(),
+                SalesInvoice.id != invoice.id,
+            )
+            .first()
+        )
+        if clash is not None:
+            held_by = " (a cancelled invoice — cancelled numbers are never reused)" \
+                if clash.status == STATUS_CANCELLED else ""
+            raise ValueError(f"Invoice number '{clash.invoice_no}' is already used{held_by}.")
+
+        warnings = []
+        gst_warning = self._gst_filed_check(session, invoice.date, "renumbering it")
+        if gst_warning:
+            warnings.append(gst_warning)
+        PeriodLockService().check_not_locked(invoice.date)
+        return new_no, warnings
+
+    # ----- audit reports (patch v1.2.0, D3) ---------------------------------
+
+    def list_cancelled_invoices(
+        self, date_from: date_type | None = None, date_to: date_type | None = None
+    ) -> list[dict]:
+        """Cancelled invoices by invoice date — what you hand an auditor who
+        asks about a missing-looking number: what it was, who cancelled it,
+        when and why."""
+        session = get_session()
+        try:
+            query = session.query(SalesInvoice).filter(
+                SalesInvoice.status == STATUS_CANCELLED,
+                SalesInvoice.is_deleted == false(),
+            )
+            if date_from:
+                query = query.filter(SalesInvoice.date >= date_from)
+            if date_to:
+                query = query.filter(SalesInvoice.date <= date_to)
+            return [
+                {
+                    "id": inv.id,
+                    "invoice_no": inv.invoice_no,
+                    "date": inv.date,
+                    "customer_name": inv.customer.name,
+                    "customer_gstin": inv.customer.gstin,
+                    "taxable_amount": float(inv.taxable_amount),
+                    "cgst": float(inv.cgst),
+                    "sgst": float(inv.sgst),
+                    "igst": float(inv.igst),
+                    "total": float(inv.total),
+                    "cancelled_by": inv.cancelled_by,
+                    "cancelled_date": inv.cancelled_date,
+                    "cancellation_reason": inv.cancellation_reason,
+                }
+                for inv in query.order_by(SalesInvoice.date, SalesInvoice.id).all()
+            ]
+        except Exception:
+            logger.exception("Failed to list cancelled invoices")
+            raise
+        finally:
+            session.close()
+
+    def check_invoice_sequence(self, date_from: date_type, date_to: date_type) -> dict:
+        """Find missing numbers in the invoice series for a date range.
+
+        Cancelled invoices count as present — they stay in the sequence — so
+        used properly this should report no gaps. See find_sequence_gaps().
+        """
+        session = get_session()
+        try:
+            numbers = [
+                no for (no,) in session.query(SalesInvoice.invoice_no).filter(
+                    SalesInvoice.date >= date_from,
+                    SalesInvoice.date <= date_to,
+                    SalesInvoice.is_deleted == false(),
+                )
+            ]
+        finally:
+            session.close()
+        return find_sequence_gaps(numbers)
+
     def get_edit_history(self, invoice_id: int) -> list[dict]:
-        """Every edit of an invoice, oldest first: who, when, why, and the
-        before/after snapshots."""
+        """Every change to an invoice, oldest first — edits, a cancellation,
+        number corrections (``action``): who, when, why, and the before/after
+        snapshots."""
         session = get_session()
         try:
             rows = (
@@ -547,6 +975,7 @@ class SalesService:
             return [
                 {
                     "id": r.id,
+                    "action": r.action or ACTION_EDIT,
                     "edited_by": r.edited_by,
                     "edited_date": r.edited_date,
                     "reason": r.reason,
@@ -594,15 +1023,19 @@ class SalesService:
 
     # ----- read ------------------------------------------------------------
 
-    def list_invoices(self) -> list[dict]:
+    def list_invoices(self, include_cancelled: bool = True) -> list[dict]:
+        """Invoices newest first, each with its ``status``.
+
+        Cancelled invoices are included by default — a document listing must
+        show that a number exists and is void. Anything that SUMS sales (e.g.
+        a dashboard "sales today") must pass include_cancelled=False.
+        """
         session = get_session()
         try:
-            invoices = (
-                session.query(SalesInvoice)
-                .filter(SalesInvoice.is_deleted == false())
-                .order_by(SalesInvoice.date.desc(), SalesInvoice.id.desc())
-                .all()
-            )
+            query = session.query(SalesInvoice).filter(SalesInvoice.is_deleted == false())
+            if not include_cancelled:
+                query = query.filter(SalesInvoice.status == STATUS_ACTIVE)
+            invoices = query.order_by(SalesInvoice.date.desc(), SalesInvoice.id.desc()).all()
             return [
                 {
                     "id": inv.id,
@@ -615,6 +1048,7 @@ class SalesService:
                     "igst": float(inv.igst),
                     "total": float(inv.total),
                     "edit_count": inv.edit_count or 0,
+                    "status": inv.status,
                 }
                 for inv in invoices
             ]
@@ -646,6 +1080,10 @@ class SalesService:
                 "total": float(invoice.total),
                 "edit_count": invoice.edit_count or 0,
                 "last_edited_date": invoice.last_edited_date,
+                "status": invoice.status,
+                "cancelled_date": invoice.cancelled_date,
+                "cancelled_by": invoice.cancelled_by,
+                "cancellation_reason": invoice.cancellation_reason,
                 # Only the current lines: an edit soft-deletes the old ones.
                 # item_id/gst_rate let the edit screen rebuild them.
                 "lines": [
@@ -668,3 +1106,79 @@ class SalesService:
             raise
         finally:
             session.close()
+
+
+def find_sequence_gaps(invoice_numbers: list[str], max_listed: int = 500) -> dict:
+    """Find missing serial numbers in a set of invoice numbers.
+
+    Invoice numbers are free text ("105", "INV-105", "DA001/2026-2027"), so
+    each number is split into its digit runs. Numbers with the same shape
+    (same text around the digits, same count of digit runs) form a family;
+    within a family the serial is the digit run that varies most, and the
+    other runs (e.g. a financial-year suffix) separate one series from the
+    next. Within each series every integer between the lowest and highest
+    serial must be present.
+
+    Returns {"series": [...], "gaps": [{"series", "missing", "count"}],
+    "unchecked": [numbers with no digits]}. Each gap lists the missing numbers
+    formatted like their neighbours (zero padding kept), compressed into
+    ranges such as "106-108".
+    """
+    families: dict[tuple, list[tuple[str, list[str]]]] = {}
+    unchecked = []
+    for number in sorted(set(invoice_numbers)):
+        parts = re.split(r"(\d+)", number)
+        texts, runs = tuple(parts[0::2]), parts[1::2]
+        if not runs:
+            unchecked.append(number)
+            continue
+        families.setdefault(texts, []).append((number, runs))
+
+    series_out, gaps = [], []
+    for texts, members in families.items():
+        run_count = len(members[0][1])
+        serial_index = max(
+            range(run_count),
+            key=lambda i: (len({runs[i] for _n, runs in members}), i),
+        )
+        by_series: dict[tuple, list[str]] = {}
+        for _number, runs in members:
+            key = tuple(r for i, r in enumerate(runs) if i != serial_index)
+            by_series.setdefault(key, []).append(runs[serial_index])
+
+        for key, serials in by_series.items():
+            width = min(len(v) for v in serials)
+            values = sorted({int(v) for v in serials})
+
+            def label(serial, key=key):
+                fixed = iter(key)
+                pieces = []
+                for i in range(run_count):
+                    pieces.append(texts[i])
+                    pieces.append(str(serial).zfill(width) if i == serial_index else next(fixed))
+                pieces.append(texts[run_count])
+                return "".join(pieces)
+
+            name = label("#" * width)
+            missing = sorted(set(range(values[0], values[-1] + 1)) - set(values))
+            series_out.append({
+                "series": name,
+                "first": label(values[0]),
+                "last": label(values[-1]),
+                "count": len(values),
+                "missing_count": len(missing),
+            })
+            if missing:
+                ranges, start = [], missing[0]
+                for prev, cur in zip(missing, missing[1:] + [None]):
+                    if cur != prev + 1:
+                        ranges.append(label(start) if start == prev else f"{label(start)} to {label(prev)}")
+                        start = cur
+                gaps.append({
+                    "series": name,
+                    "missing": ranges[:max_listed],
+                    "count": len(missing),
+                })
+    series_out.sort(key=lambda r: r["series"])
+    gaps.sort(key=lambda r: r["series"])
+    return {"series": series_out, "gaps": gaps, "unchecked": unchecked}

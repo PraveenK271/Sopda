@@ -282,6 +282,31 @@ class AccountingService:
             session.close()
 
     @staticmethod
+    def get_account_balance(session, account_id: int) -> float:
+        """Signed closing balance of one ledger (+ = Dr, − = Cr), opening
+        balance included — the same arithmetic as the outstanding reports.
+        Reads through the caller's session so it sees uncommitted work."""
+        from sqlalchemy import func as sqlfunc
+        account = session.get(LedgerAccount, account_id)
+        dr, cr = (
+            session.query(
+                sqlfunc.coalesce(sqlfunc.sum(JournalEntryLine.debit), 0),
+                sqlfunc.coalesce(sqlfunc.sum(JournalEntryLine.credit), 0),
+            )
+            .join(JournalEntry, JournalEntryLine.entry_id == JournalEntry.id)
+            .filter(
+                JournalEntryLine.account_id == account_id,
+                JournalEntryLine.is_deleted == false(),
+                JournalEntry.is_deleted == false(),
+            )
+            .one()
+        )
+        opening = float(account.opening_balance or 0)
+        if account.opening_balance_type == "Cr":
+            opening = -opening
+        return round(opening + float(dr) - float(cr), 2)
+
+    @staticmethod
     def _line_totals_by_account(session, date_from=None, date_to=None) -> dict:
         """Helper: returns {account_id: (total_dr, total_cr)} for posted journal lines."""
         from sqlalchemy import func as sqlfunc

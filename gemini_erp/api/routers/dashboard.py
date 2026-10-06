@@ -32,7 +32,11 @@ def dashboard(user: User = Depends(get_current_user)):
     }
 
     if AuthService.has_permission(user, MODULE_SALES_LOG):
-        todays = [inv for inv in SalesService().list_invoices() if inv["date"] == today]
+        # A cancelled invoice is not a sale: sum ACTIVE invoices only.
+        todays = [
+            inv for inv in SalesService().list_invoices(include_cancelled=False)
+            if inv["date"] == today
+        ]
         result["sales_today"] = {
             "count": len(todays),
             "total": round(sum(inv["total"] for inv in todays), 2),

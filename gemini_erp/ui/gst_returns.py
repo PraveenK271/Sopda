@@ -2,6 +2,10 @@
 
 Read-only "figures to enter on the GST portal" — no e-filing integration.
 All numbers come from GstReportService; this screen only lays them out.
+
+Patch v1.2.0: cancelled invoices are excluded from every GSTR-1 / GSTR-3B
+figure and listed in their own "Cancelled invoices" table, clearly labelled,
+rather than silently dropped.
 """
 
 import logging
@@ -61,6 +65,15 @@ class GstReturnsScreen(QWidget):
         self.b2b_table.setAlternatingRowColors(True)
         self.b2c_label = QLabel("")
 
+        self.cancelled_label = QLabel("")
+        self.cancelled_table = QTableWidget()
+        self.cancelled_table.setColumnCount(6)
+        self.cancelled_table.setHorizontalHeaderLabels(
+            ["Invoice No", "Date", "Customer", "GSTIN", "Taxable (not reported)", "Reason"]
+        )
+        self.cancelled_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.cancelled_table.setMaximumHeight(140)
+
         # GSTR-3B summary table
         self.gstr3b_table = QTableWidget()
         self.gstr3b_table.setColumnCount(5)
@@ -75,6 +88,8 @@ class GstReturnsScreen(QWidget):
         layout.addWidget(QLabel("<b>GSTR-1 — B2B (registered customers)</b>"))
         layout.addWidget(self.b2b_table)
         layout.addWidget(self.b2c_label)
+        layout.addWidget(self.cancelled_label)
+        layout.addWidget(self.cancelled_table)
         layout.addWidget(QLabel("<b>GSTR-3B — Summary</b>"))
         layout.addWidget(self.gstr3b_table)
         self.setLayout(layout)
@@ -112,6 +127,19 @@ class GstReturnsScreen(QWidget):
             f"Taxable {b2c['taxable_value']:,.2f}   CGST {b2c['cgst']:,.2f}   "
             f"SGST {b2c['sgst']:,.2f}   IGST {b2c['igst']:,.2f}"
         )
+
+        cancelled = g1["cancelled"]
+        self.cancelled_label.setText(
+            f"<b>Cancelled invoices ({len(cancelled)})</b> — excluded from all figures above "
+            "and from GSTR-3B; they keep their place in the invoice series."
+        )
+        self.cancelled_table.setRowCount(len(cancelled))
+        for row_idx, r in enumerate(cancelled):
+            values = [r["invoice_no"], str(r["date"]), r["customer_name"], r["customer_gstin"] or "",
+                      f"{r['taxable_amount']:,.2f}", r["cancellation_reason"] or ""]
+            for col, value in enumerate(values):
+                self.cancelled_table.setItem(row_idx, col, QTableWidgetItem(value))
+        self.cancelled_table.resizeColumnsToContents()
 
     def _fill_gstr3b(self, g3: dict):
         outward = g3["outward_taxable_supplies"]

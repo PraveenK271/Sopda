@@ -96,6 +96,25 @@ Test every patch with `check_upgrade_path.py` against a copy of a real
 pre-patch database, and bump `APP_VERSION` in `gemini_erp/version.py` (and
 `installer.iss`).
 
+Startup order is fixed: backup → `create_tables()` → migrations →
+`seed_database()`. Seeding runs ORM queries that select every mapped column,
+so it must come after the migrations that add them.
+
+**Documents are cancelled, never deleted (from v1.2.0).**
+- A sales invoice is voided with `SalesService.cancel_invoice()`: status
+  `CANCELLED`, reversing stock + journal entries, lines kept readable. There
+  is no hard delete — if a row ever truly must go, that is a deliberate
+  one-off database operation against a backup, not a button.
+- **Invoice numbers are never reused.** A cancelled invoice keeps its number
+  for good (GST Rule 46(b): the serial stays consecutive). A mistyped number
+  is fixed with `correct_invoice_number()`, not cancel + re-enter.
+- **Financial reports self-correct; document listings do not.** Trial
+  Balance, P&L, Balance Sheet, ledgers, outstanding and stock are sums over
+  journals / stock rows, which include the reversals. Anything that LISTS
+  invoices or SUMS invoice rows (registers, HSN, GSTR-1/3B, dashboards, sales
+  reports) must filter `status == 'ACTIVE'` — or make a deliberate, commented
+  decision not to. Every new query on `sales_invoices` needs that decision.
+
 ---
 
 ## Core tables (Phase 1)

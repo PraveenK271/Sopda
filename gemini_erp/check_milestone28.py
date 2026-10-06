@@ -45,7 +45,7 @@ def _make_item(stamp, opening_stock):
 
 def scenario_a_duplicate_number(customer_id, item_id, stamp):
     sales = SalesService()
-    invoice_no = f"CHK-M28-DUP-{stamp}"
+    invoice_no = f"M28D-{stamp[-8:]}"  # <= 16 chars (GST Rule 46(b))
     barrier = threading.Barrier(2)
     results = []
 
@@ -89,7 +89,7 @@ def scenario_b_concurrent_stock(customer_id, item_id, stamp, n=8):
     def sell(i):
         barrier.wait()
         sales.create_invoice(
-            invoice_no=f"CHK-M28-CONC-{stamp}-{i}", invoice_date=date.today(),
+            invoice_no=f"M28C-{stamp[-8:]}-{i}", invoice_date=date.today(),
             customer_id=customer_id, lines=[{"item_id": item_id, "quantity": 1, "rate": 100}],
             created_by="check_milestone28",
         )
@@ -121,7 +121,7 @@ def scenario_c_oversell_warns(customer_id, stamp):
     # Fresh item with only 2 in stock; sell 5 -> allowed, but warned + negative.
     item = _make_item(f"{stamp}-oversell", opening_stock=2)
     invoice = SalesService().create_invoice(
-        invoice_no=f"CHK-M28-OVER-{stamp}", invoice_date=date.today(), customer_id=customer_id,
+        invoice_no=f"M28O-{stamp[-8:]}", invoice_date=date.today(), customer_id=customer_id,
         lines=[{"item_id": item.id, "quantity": 5, "rate": 100}], created_by="check_milestone28",
     )
     warnings = getattr(invoice, "stock_warnings", [])

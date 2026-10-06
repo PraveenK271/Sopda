@@ -39,11 +39,13 @@ from models import Role, User  # noqa: E402
 from services.auth_service import AuthService  # noqa: E402
 from services.customer_service import CustomerService  # noqa: E402
 from services.item_service import ItemService  # noqa: E402
+from services.migration_service import MigrationService  # noqa: E402
 from services.permissions import ROLE_ACCOUNTANT, ROLE_ADMINISTRATOR, ROLE_SALES_USER  # noqa: E402
 from services.purchase_service import PurchaseService  # noqa: E402
 from services.sales_service import SalesService  # noqa: E402
 from services.session_context import SessionContext  # noqa: E402
 from services.supplier_service import SupplierService  # noqa: E402
+from version import APP_VERSION  # noqa: E402
 
 
 def _login_as(username):
@@ -67,7 +69,7 @@ def check_startup(app):
         assert app_main._prepare_database(app) is True and shown == [], shown
         with engine.connect() as conn:
             versions = {v for (v,) in conn.execute(text("SELECT version FROM schema_migrations"))}
-        assert versions == {"001", "002", "003"}, versions
+        assert versions == {m.VERSION for m in MigrationService.discover_migrations()}, versions
         print("[1] fresh install: tables created, migrations recorded, no backup, no dialog OK")
 
         # an existing install with a pending migration: backup, migrate, announce
@@ -120,7 +122,7 @@ def check_roles():
     for username, can_edit in (("ui_admin", True), ("ui_acct", True), ("ui_sales", False)):
         _login_as(username)
         window = app_main.MainWindow()
-        assert "1.1.0" in window.windowTitle()
+        assert APP_VERSION in window.windowTitle()
         assert (window.sales_log_screen.edit_button is not None) == can_edit, username
         window.close()
     print("[2] MainWindow builds for all roles; version in title; Edit button only for "

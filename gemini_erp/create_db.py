@@ -66,7 +66,16 @@ def initialize_database() -> None:
     ``ensure_system_accounts`` only inserts what is missing, so re-running
     changes nothing on an established database. No printing — see :func:`main`
     for the CLI wrapper (a windowed/packaged app may have no stdout).
+
+    The app's startup (main._prepare_database) calls the two halves separately
+    so the numbered migrations run BETWEEN them — see seed_database().
     """
+    create_tables()
+    seed_database()
+
+
+def create_tables() -> None:
+    """create_all + the pre-v1.1.0 in-place column additions. No ORM queries."""
     # create_all first so brand-new tables (bank_accounts, receipts, payments)
     # exist, then migrate the new FK column onto the already-existing
     # ledger_accounts table (create_all never alters existing tables).
@@ -78,6 +87,16 @@ def initialize_database() -> None:
     _migrate_add_column("documents", "approved_date", "DATETIME")
     _migrate_add_column("documents", "approval_note", "VARCHAR(255)")
 
+
+def seed_database() -> None:
+    """Seed system accounts, the company profile, roles and the default admin.
+
+    These are ORM queries, which SELECT every mapped column — so on a database
+    being upgraded they must run AFTER the numbered migrations have added the
+    new columns (e.g. ensure_profile() reads company_profile, which v1.2.0's
+    migration 004 extends). Running them first would fail with "no such
+    column" before the migration ever got a chance to run.
+    """
     session = SessionLocal()
     try:
         ensure_system_accounts(session)

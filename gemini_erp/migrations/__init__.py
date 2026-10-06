@@ -16,4 +16,5 @@ MIGRATION_MODULES = [
     "m001_purchase_discounts",
     "m002_sales_invoice_audit",
     "m003_supplier_credit_notes",
+    "m004_invoice_cancellation",
 ]

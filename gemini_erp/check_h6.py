@@ -44,6 +44,9 @@ def main():
         raise SystemExit("Refusing to run against SQL Server (sets a period lock). Use a throwaway SQLite DB.")
 
     stamp = datetime.now().strftime("%H%M%S%f")
+    # Sales invoice numbers must obey GST Rule 46(b) (<= 16 chars, v1.2.0), so
+    # they use a shorter per-run reference than the item/party names.
+    ref = stamp[-8:]
     lock = PeriodLockService()
     sales, purchases, banking = SalesService(), PurchaseService(), BankingService()
 
@@ -58,13 +61,13 @@ def main():
     print(f"Locked up to {LOCK_DATE.strftime('%d-%m-%Y')}")
 
     # Every transactional service refuses a locked date.
-    assert _blocked(lambda: sales.create_invoice(f"H6-S-{stamp}", BLOCKED, cust.id, line, "check_h6")), "sales not blocked"
+    assert _blocked(lambda: sales.create_invoice(f"H6S-{ref}", BLOCKED, cust.id, line, "check_h6")), "sales not blocked"
     assert _blocked(lambda: purchases.create_purchase_invoice(f"H6-P-{stamp}", BLOCKED, supp.id, line, "check_h6")), "purchase not blocked"
     assert _blocked(lambda: banking.record_receipt(date=BLOCKED, customer_id=cust.id, amount=100, payment_mode="CASH", created_by="check_h6")), "receipt not blocked"
     print("Sales, purchase and receipt dated 15-07-2026 all refused")
 
     # A date after the lock saves.
-    inv = sales.create_invoice(f"H6-OK-{stamp}", ALLOWED, cust.id, line, "check_h6")
+    inv = sales.create_invoice(f"H6OK-{ref}", ALLOWED, cust.id, line, "check_h6")
     assert inv.id is not None
     print("Invoice dated 05-08-2026 saved normally")
 
@@ -84,7 +87,7 @@ def main():
     # Unlock, then the previously-blocked date saves.
     lock.unlock("check_h6", "correcting a mis-typed opening figure")
     assert not lock.is_locked(BLOCKED)
-    inv2 = sales.create_invoice(f"H6-AFTER-{stamp}", BLOCKED, cust.id, line, "check_h6")
+    inv2 = sales.create_invoice(f"H6AF-{ref}", BLOCKED, cust.id, line, "check_h6")
     assert inv2.id is not None
     print("After unlock, the 15-07-2026 invoice saves")
 

@@ -224,10 +224,14 @@ async function viewInvoices(root) {
     const c = el("div", "card");
     const row = el("div", "row");
     const left = el("div");
-    left.appendChild(el("div", "primary", esc(inv.invoice_no)));
+    const cancelled = inv.status === "CANCELLED";
+    left.appendChild(el("div", "primary", esc(inv.invoice_no) + (cancelled ? " · CANCELLED" : "")));
     left.appendChild(el("div", "muted", esc(inv.customer_name) + " · " + esc(inv.date)));
     row.appendChild(left);
-    row.appendChild(el("div", "amount primary", money(inv.total)));
+    // A cancelled invoice is void: show its amount struck through, not as a sale.
+    const amount = el("div", "amount " + (cancelled ? "muted" : "primary"), money(inv.total));
+    if (cancelled) amount.style.textDecoration = "line-through";
+    row.appendChild(amount);
     c.appendChild(row);
     root.appendChild(c);
   });

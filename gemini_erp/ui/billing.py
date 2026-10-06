@@ -386,6 +386,13 @@ class BillingScreen(QWidget):
             logger.exception("Failed to load invoice %s for edit", invoice_id)
             QMessageBox.critical(self, "Error", f"Could not open invoice:\n{exc}")
             return
+        if details["status"] == "CANCELLED":
+            # Read-only; update_invoice() refuses it too.
+            QMessageBox.warning(
+                self, "Cancelled invoice",
+                f"Invoice {details['invoice_no']} is cancelled and cannot be edited.",
+            )
+            return
 
         self.refresh_lookups()
         self.invoice_no_input.setText(details["invoice_no"])

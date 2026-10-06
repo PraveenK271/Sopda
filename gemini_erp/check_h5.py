@@ -59,6 +59,9 @@ def main():
 
     svc = ImportService()
     stamp = datetime.now().strftime("%H%M%S%f")
+    # Sales invoice numbers must obey GST Rule 46(b) (<= 16 chars, v1.2.0), so
+    # they use a shorter per-run reference than the item/party names.
+    ref = stamp[-8:]
     tmp = tempfile.mkdtemp(prefix="h5_")
     item = ItemService().add_item(code=f"H5-A-{stamp}", name="Item", unit="PCS", gst_rate=18, opening_stock=100, created_by="check_h5")
 
@@ -66,7 +69,7 @@ def main():
     supp = f"H5 Supp {stamp}"
     # A sale -> customer auto-created, outstanding 1180.
     sf = os.path.join(tmp, "sales.xlsx")
-    _write(sf, "SALES", [[f"H5-INV-{stamp}", "05-04-2026", cust, "37AAAAA0000A1Z5", AP, item.code, 10, 100, 1180]])
+    _write(sf, "SALES", [[f"H5I-{ref}", "05-04-2026", cust, "37AAAAA0000A1Z5", AP, item.code, 10, 100, 1180]])
     svc.import_sales(sf, "check_h5")
     assert abs(_outstanding(cust) - 1180) < 0.01, _outstanding(cust)
 

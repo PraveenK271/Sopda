@@ -15,6 +15,14 @@ inter-state supply, so the whole line tax is IGST; otherwise it splits into
 CGST + SGST. We compute `cgst = round(gst_amount / 2)` and
 `sgst = gst_amount - cgst` so a line's CGST + SGST always equals its
 `gst_amount` exactly (no half-paisa drift when aggregating).
+
+Cancelled sales invoices (patch v1.2.0)
+---------------------------------------
+Because this layer reads invoice rows, not journals, it does NOT self-correct
+when an invoice is cancelled. Every SALES figure here therefore counts
+status == 'ACTIVE' only; cancelled invoices are listed separately
+(get_cancelled_sales_register, GSTR-1 "cancelled") so the document trail is
+complete without inflating any taxable value or tax total.
 """
 
 import logging
@@ -32,6 +40,12 @@ from models import (
     SalesInvoiceItem,
     Supplier,
 )
+
+# sales_invoices.status of an invoice that counts (see the module docstring).
+# Kept literal rather than imported from sales_service to keep this read layer
+# free of the write services.
+ACTIVE = "ACTIVE"
+CANCELLED = "CANCELLED"
 
 logger = logging.getLogger(__name__)
 
@@ -68,7 +82,7 @@ class GstReportService:
         else:
             raise ValueError(f"Invalid direction '{direction}' (expected 'SALES' or 'PURCHASE')")
 
-        rows = (
+        query = (
             session.query(line_cls, invoice_cls, party_cls, Item)
             .join(invoice_cls, line_cls.invoice_id == invoice_cls.id)
             .join(party_cls, party_fk == party_cls.id)
@@ -79,9 +93,12 @@ class GstReportService:
                 invoice_cls.is_deleted == false(),
                 line_cls.is_deleted == false(),
             )
-            .order_by(invoice_cls.date, invoice_cls.id, line_cls.id)
-            .all()
         )
+        if direction == SALES:
+            # A cancelled invoice keeps its (non-deleted) lines for the audit
+            # trail, so it must be excluded here explicitly.
+            query = query.filter(SalesInvoice.status == ACTIVE)
+        rows = query.order_by(invoice_cls.date, invoice_cls.id, line_cls.id).all()
 
         result = []
         for line, invoice, party, item in rows:
@@ -137,6 +154,47 @@ class GstReportService:
             ]
         except Exception:
             logger.exception("Failed to build sales register")
+            raise
+        finally:
+            session.close()
+
+    @staticmethod
+    def get_cancelled_sales_register(date_from: date_type, date_to: date_type) -> list[dict]:
+        """Cancelled sales invoices in the period, one row per invoice — the
+        separate section under the Sales Register. Excluded from its totals;
+        listed so the document trail is complete."""
+        session = get_session()
+        try:
+            rows = (
+                session.query(SalesInvoice, Customer)
+                .join(Customer, SalesInvoice.customer_id == Customer.id)
+                .filter(
+                    SalesInvoice.date >= date_from,
+                    SalesInvoice.date <= date_to,
+                    SalesInvoice.is_deleted == false(),
+                    SalesInvoice.status == CANCELLED,
+                )
+                .order_by(SalesInvoice.date, SalesInvoice.id)
+                .all()
+            )
+            return [
+                {
+                    "date": inv.date,
+                    "invoice_no": inv.invoice_no,
+                    "customer_name": customer.name,
+                    "customer_gstin": customer.gstin,
+                    "taxable_amount": float(inv.taxable_amount),
+                    "cgst": float(inv.cgst),
+                    "sgst": float(inv.sgst),
+                    "igst": float(inv.igst),
+                    "total": float(inv.total),
+                    "cancelled_date": inv.cancelled_date,
+                    "cancellation_reason": inv.cancellation_reason,
+                }
+                for inv, customer in rows
+            ]
+        except Exception:
+            logger.exception("Failed to list cancelled sales invoices")
             raise
         finally:
             session.close()
@@ -204,7 +262,9 @@ class GstReportService:
     @staticmethod
     def get_gstr1_summary(date_from: date_type, date_to: date_type) -> dict:
         """GSTR-1 outward supplies: B2B (per invoice, registered customers),
-        B2C small (aggregated, unregistered customers), plus HSN summary."""
+        B2C small (aggregated, unregistered customers), plus HSN summary.
+        Cancelled invoices are excluded from every figure and listed under
+        "cancelled" instead of being silently dropped."""
         session = get_session()
         try:
             invoices = (
@@ -214,6 +274,7 @@ class GstReportService:
                     SalesInvoice.date >= date_from,
                     SalesInvoice.date <= date_to,
                     SalesInvoice.is_deleted == false(),
+                    SalesInvoice.status == ACTIVE,
                 )
                 .order_by(SalesInvoice.date, SalesInvoice.id)
                 .all()
@@ -254,6 +315,7 @@ class GstReportService:
                 "igst": round(b2c_igst, 2),
             },
             "hsn_summary": GstReportService.get_hsn_summary(date_from, date_to, SALES),
+            "cancelled": GstReportService.get_cancelled_sales_register(date_from, date_to),
         }
 
     @staticmethod
@@ -292,10 +354,11 @@ class GstReportService:
 
     @staticmethod
     def _invoice_tax_totals(session, invoice_cls, date_from, date_to) -> dict:
-        """Sum taxable_amount/cgst/sgst/igst over non-deleted invoices in range."""
+        """Sum taxable_amount/cgst/sgst/igst over non-deleted (and, for sales,
+        non-cancelled) invoices in range."""
         from sqlalchemy import func as sqlfunc
 
-        row = (
+        query = (
             session.query(
                 sqlfunc.coalesce(sqlfunc.sum(invoice_cls.taxable_amount), 0),
                 sqlfunc.coalesce(sqlfunc.sum(invoice_cls.cgst), 0),
@@ -307,8 +370,12 @@ class GstReportService:
                 invoice_cls.date <= date_to,
                 invoice_cls.is_deleted == false(),
             )
-            .one()
         )
+        if invoice_cls is SalesInvoice:
+            # Outward supplies exclude cancelled invoices. (Purchase invoices
+            # have no status; the input-tax side is unchanged.)
+            query = query.filter(SalesInvoice.status == ACTIVE)
+        row = query.one()
         return {
             "taxable_amount": round(float(row[0]), 2),
             "cgst": round(float(row[1]), 2),

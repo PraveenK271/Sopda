@@ -66,7 +66,7 @@ def main():
             state="Andhra Pradesh", address="Test",
             created_by=SessionContext.get_username(),
         )
-        invoice_no = f"CHK-M27-INV-{stamp}"
+        invoice_no = f"M27I-{stamp[-8:]}"  # <= 16 chars (GST Rule 46(b))
         SalesService().create_invoice(
             invoice_no=invoice_no,
             invoice_date=date.today(),

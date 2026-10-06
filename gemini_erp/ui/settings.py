@@ -2,13 +2,22 @@
 
 UI only — it collects input and shows results. All logic lives in
 SettingsService (company profile) and BackupService (backups).
+
+Patch v1.2.0: the "GST returns filed up to" date. It is what turns the
+cancel / renumber guards from advice into a control, so it has its own box,
+its own Save, and an Administrator check in the service (the Settings tab is
+Administrator-only already; the service does not rely on that).
 """
 
 import logging
 
+from PySide6.QtCore import QDate
 from PySide6.QtWidgets import (
+    QCheckBox,
+    QDateEdit,
     QFileDialog,
     QFormLayout,
+    QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -20,6 +29,7 @@ from PySide6.QtWidgets import (
 )
 
 from services.backup_service import BackupService
+from services.session_context import SessionContext
 from services.settings_service import SettingsService
 from version import APP_VERSION
 
@@ -86,12 +96,45 @@ class SettingsScreen(QWidget):
         )
         self.status_label.setWordWrap(True)
 
+        # --- GST returns filed up to (v1.2.0) ---
+        self.gst_filed_set = QCheckBox("GSTR-1 has been filed up to")
+        self.gst_filed_date = QDateEdit(QDate.currentDate())
+        self.gst_filed_date.setCalendarPopup(True)
+        self.gst_filed_date.setDisplayFormat("dd-MM-yyyy")
+        self.gst_filed_date.setMaximumDate(QDate.currentDate())
+        self.gst_filed_set.toggled.connect(self.gst_filed_date.setEnabled)
+        self.gst_filed_save = QPushButton("Save GST Filing Date")
+        self.gst_filed_save.clicked.connect(self.on_save_gst_filed)
+        gst_row = QHBoxLayout()
+        gst_row.addWidget(self.gst_filed_set)
+        gst_row.addWidget(self.gst_filed_date)
+        gst_row.addWidget(self.gst_filed_save)
+        gst_row.addStretch(1)
+        gst_help = QLabel(
+            "Set this to the last date for which you have filed GSTR-1. Invoices on or before "
+            "this date cannot be cancelled or renumbered. Update it each month after filing."
+        )
+        gst_help.setWordWrap(True)
+        self.gst_filed_prompt = QLabel(
+            "Not set yet: cancelling or renumbering an invoice only shows a warning until "
+            "this date is set."
+        )
+        self.gst_filed_prompt.setStyleSheet("color: #8a6d00;")
+        self.gst_filed_prompt.setWordWrap(True)
+        gst_layout = QVBoxLayout()
+        gst_layout.addLayout(gst_row)
+        gst_layout.addWidget(gst_help)
+        gst_layout.addWidget(self.gst_filed_prompt)
+        gst_box = QGroupBox("GST returns")
+        gst_box.setLayout(gst_layout)
+
         self.version_label = QLabel(f"Gemini ERP version {APP_VERSION}")
         self.version_label.setStyleSheet("color: #555;")
 
         layout = QVBoxLayout()
         layout.addLayout(form)
         layout.addLayout(buttons)
+        layout.addWidget(gst_box)
         layout.addWidget(self.status_label)
         layout.addWidget(self.version_label)
         self.setLayout(layout)
@@ -117,6 +160,13 @@ class SettingsScreen(QWidget):
         self.bank_branch_input.setText(profile["bank_branch"] or "")
         self.terms_input.setPlainText("\n".join(profile["terms"]))
         self.logo_input.setText(profile["logo_path"] or "")
+
+        filed = profile["gst_filed_upto_date"]
+        self.gst_filed_set.setChecked(filed is not None)
+        self.gst_filed_date.setEnabled(filed is not None)
+        if filed is not None:
+            self.gst_filed_date.setDate(QDate(filed.year, filed.month, filed.day))
+        self.gst_filed_prompt.setVisible(filed is None)
 
     def on_browse_logo(self):
         path, _ = QFileDialog.getOpenFileName(
@@ -155,6 +205,28 @@ class SettingsScreen(QWidget):
             return
         self.status_label.setText("Company profile saved.")
         QMessageBox.information(self, "Settings", "Company profile saved.")
+
+    def on_save_gst_filed(self):
+        value = self.gst_filed_date.date().toPython() if self.gst_filed_set.isChecked() else None
+        if value is None:
+            answer = QMessageBox.question(
+                self, "Clear GST filing date",
+                "Clear the GST filing date? Cancelling or renumbering invoices in filed "
+                "periods will then only show a warning.",
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                return
+        try:
+            self.settings_service.set_gst_filed_upto_date(value, SessionContext.get_username())
+        except Exception as exc:
+            logger.exception("Failed to save the GST filed-up-to date")
+            QMessageBox.critical(self, "Settings", f"Could not save the GST filing date:\n{exc}")
+            return
+        self.gst_filed_prompt.setVisible(value is None)
+        message = (f"GST returns marked as filed up to {value:%d-%m-%Y}." if value
+                   else "GST filing date cleared.")
+        self.status_label.setText(message)
+        QMessageBox.information(self, "Settings", message)
 
     def on_backup(self):
         self.backup_button.setEnabled(False)

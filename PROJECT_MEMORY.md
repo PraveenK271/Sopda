@@ -48,7 +48,9 @@ onedir + Inno Setup installer. OCR runs out-of-process under Python 3.13.
   temporary SQLite first.
 - `gemini_erp/gemini_erp.db` is a pre-v1.1.0 SQLite dev database full of test
   fixtures. It is the reference "pre-patch" database for
-  `check_upgrade_path.py`, which only ever works on a copy.
+  `check_upgrade_path.py`, which only ever works on a copy. For a v1.2.0+
+  release, run that check against a copy of v1.1.0-era data as well (pass the
+  path as the argument).
 
 ## 6. Gotchas (each one has bitten this project)
 
@@ -57,6 +59,9 @@ onedir + Inno Setup installer. OCR runs out-of-process under Python 3.13.
 | `create_all()` does not add columns to existing tables — schema changes need a migration | "Invalid column name" on a user's existing database | Numbered migration in `migrations/` (v1.1.0+) |
 | Python's sqlite3 runs `ALTER TABLE` in autocommit | A failed migration's DDL is not rolled back | `MigrationService` runs SQLite migrations on an engine that emits `BEGIN` itself |
 | `initialize_database()` writes (new tables, seeds) | A backup taken after it is not a true pre-patch copy | Startup backs up BEFORE bootstrap when migrations are pending |
+| Seeding (`ensure_profile` etc.) is an ORM query that selects EVERY mapped column | On an upgrade it hits a column the pending migration has not added yet → "no such column" before migrations run (would have broken every v1.1→v1.2 upgrade) | Startup order: backup → `create_tables()` → migrations → `seed_database()` |
+| Every query reading `sales_invoices` needs a `status` filter or a deliberate decision not to have one | A cancelled invoice quietly inflates a register / GST return / dashboard | Lists and sums filter `status == 'ACTIVE'`; journal-based reports need nothing (reversals) |
+| The PWA shell is served cache-first by the service worker | Phones keep the old `app.js` forever | Bump `CACHE` in `api/static/sw.js` on every shell change |
 | Modules imported by name at runtime (passlib's bcrypt handler, `migrations.mNNN_*`) | Missing from the PyInstaller build → crash only in the .exe | List them in the `.spec` `hiddenimports` |
 | `bcrypt` 4.1+ breaks passlib 1.7.4 | Login fails | `bcrypt==4.0.1` pinned |
 | Old SQLite dbs store `stock_transactions.date` as `'YYYY-MM-DD 00:00:00.000000'` | ORM Date parse crash when loading those rows | SQLite `DATE(regexp=...)` variant on the column (read-side only) |
@@ -65,7 +70,7 @@ onedir + Inno Setup installer. OCR runs out-of-process under Python 3.13.
 | SQL Server `ALTER TABLE ... ADD` has no `COLUMN` keyword | DDL error on MSSQL only | `MigrationService.add_column()` handles both |
 | Bare `Numeric()` fails on SQL Server | DDL error | Always `Numeric(p, s)` |
 
-## 7. Build status (2026-09-27)
+## 7. Build status (2026-10-06)
 
 - Phases 1–4 complete; historical import H1–H6 complete (see `progress.md`).
 - **v1.1.0 built and checked** (`CHECKLIST_PATCH_V1_1.md`): migration
@@ -74,10 +79,18 @@ onedir + Inno Setup installer. OCR runs out-of-process under Python 3.13.
   was tested by the owner and works. Still to do before updating the
   multi-user install: rehearse the upgrade on a restored COPY of the SQL
   Server database.
+- **v1.2.0 built and checked** (`CHECKLIST_PATCH_V1_2.md`): cancel a sales
+  invoice, correct an invoice number, "GST returns filed up to" date,
+  cancelled invoices excluded from every sales/GST figure + Cancelled Invoices
+  report + Invoice Sequence Check. `check_d1..d3`, `check_v12_ui` and
+  `check_upgrade_path` (from v1.0 AND from v1.1.0-era data) pass. Still to
+  do: build + test the exe; rehearse on a restored copy of the live database.
 - **Deferred:** GSTR-3B ITC does not yet net off Input GST reversed by GST
   credit notes — waiting on the accountant (see `CHECKLIST_PATCH_V1_1.md`).
-- Open: sales discounts, Purchase Return, sales credit notes / cancellation,
-  purchase edit on the reverse-and-re-post design, AI reports.
+- Open: sales-side credit note (needed to void an invoice in a filed GST
+  period), cancelling/editing purchase invoices on the reverse-and-re-post
+  design, reversing a receipt/payment, sales discounts, Purchase Return,
+  AI reports.
 
 ## 8. Decisions (do not re-litigate without asking)
 
@@ -99,3 +112,16 @@ onedir + Inno Setup installer. OCR runs out-of-process under Python 3.13.
 - **Migrations are hand-rolled and additive-only** (not Alembic). Rollback =
   restore the automatic backup; no downgrade migrations.
 - Oversell is allowed but warned, on new sales and on edits alike.
+- **Cancel, never delete.** A cancelled sales invoice keeps its row, lines,
+  original stock and journal rows (flagged `is_reversed`) and gets reversing
+  entries (`SALE_CANCELLATION`) dated like the original. **The number stays
+  in the sequence and is never reused.** Administrator only. Blocked in a
+  filed GST period (credit-note route) and in a locked period.
+- **Number correction exists separately, for typos.** It changes the label and
+  the journal narrations only — no stock or accounting movement — so a
+  mistyped number never leaves a phantom cancelled invoice behind.
+- **The "GST returns filed up to" date is the control.** Set it after each
+  filing; cancel / renumber are blocked on or before it, and only warn while
+  it has never been set.
+- Invoice numbers follow GST Rule 46(b) everywhere (new, corrected,
+  imported): ≤ 16 characters of letters, digits, `-` and `/`.

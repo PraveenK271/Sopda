@@ -23,6 +23,19 @@ from services.settings_service import SettingsService
 logger = logging.getLogger(__name__)
 
 
+def _cancelled_watermark(canvas, doc):
+    """Diagonal CANCELLED across the page (patch v1.2.0), so a printed or saved
+    copy of a cancelled invoice can never be mistaken for a live one."""
+    canvas.saveState()
+    width, height = A4
+    canvas.translate(width / 2, height / 2)
+    canvas.rotate(45)
+    canvas.setFillColor(colors.Color(0.8, 0, 0, alpha=0.25))
+    canvas.setFont("Helvetica-Bold", 96)
+    canvas.drawCentredString(0, -30, "CANCELLED")
+    canvas.restoreState()
+
+
 def generate_invoice_pdf(invoice_id: int, output_path: str) -> str:
     """Render the given invoice as a PDF and save it to output_path."""
     session = get_session()
@@ -65,6 +78,15 @@ def generate_invoice_pdf(invoice_id: int, output_path: str) -> str:
         )
         elements.append(Spacer(1, 6 * mm))
         elements.append(Paragraph("TAX INVOICE", title_style))
+        cancelled = invoice.status == "CANCELLED"
+        if cancelled:
+            when = invoice.cancelled_date.strftime("%d-%m-%Y") if invoice.cancelled_date else ""
+            notice = ParagraphStyle(
+                "Cancelled", parent=center, textColor=colors.red, fontName="Helvetica-Bold"
+            )
+            elements.append(Paragraph(
+                f"CANCELLED on {when} — {escape(invoice.cancellation_reason or '')}", notice
+            ))
         elements.append(Spacer(1, 4 * mm))
 
         # Invoice and customer details
@@ -201,7 +223,10 @@ def generate_invoice_pdf(invoice_id: int, output_path: str) -> str:
             leftMargin=15 * mm,
             rightMargin=15 * mm,
         )
-        doc.build(elements)
+        if cancelled:
+            doc.build(elements, onFirstPage=_cancelled_watermark, onLaterPages=_cancelled_watermark)
+        else:
+            doc.build(elements)
         logger.info("Generated PDF for invoice %s at %s", invoice.invoice_no, output_path)
         return output_path
     except Exception:

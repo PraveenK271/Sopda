@@ -3,11 +3,16 @@
 UI only: picks a date range and a view, asks GstReportService for the rows,
 shows them, and exports the current view to Excel via OpenPyXL. No figures
 are computed here.
+
+Patch v1.2.0: the Sales Register (and its Excel export) carries a separate
+"CANCELLED INVOICES" section under the active rows. Those rows are listed for
+a complete document trail and are NOT added to the totals.
 """
 
 import logging
 
 from PySide6.QtCore import QDate
+from PySide6.QtGui import QBrush, QColor, QFont
 from PySide6.QtWidgets import (
     QComboBox,
     QDateEdit,
@@ -48,6 +53,8 @@ class GstReportsScreen(QWidget):
                     ("Total", "total"),
                 ],
                 "fetch": lambda f, t: GstReportService.get_sales_register(f, t),
+                # Listed under the totals, never added to them.
+                "cancelled": lambda f, t: GstReportService.get_cancelled_sales_register(f, t),
             },
             "Purchase Register": {
                 "columns": [
@@ -135,15 +142,20 @@ class GstReportsScreen(QWidget):
         date_to = self.date_to.date().toPython()
         try:
             rows = view["fetch"](date_from, date_to)
+            cancelled = view["cancelled"](date_from, date_to) if "cancelled" in view else []
         except Exception:
             logger.exception("Failed to load GST report")
             QMessageBox.critical(self, "Error", "Could not load the GST report.")
             return
 
+        # The cancelled-section heading spans the row; drop it on every redraw
+        # so it never bleeds into another view.
+        self.table.clearSpans()
         columns = view["columns"]
         self.table.setColumnCount(len(columns))
         self.table.setHorizontalHeaderLabels([h for h, _ in columns])
-        self.table.setRowCount(len(rows))
+        # Active rows, then (if any) a heading row and the cancelled rows.
+        self.table.setRowCount(len(rows) + (len(cancelled) + 1 if cancelled else 0))
 
         totals = {"taxable_amount": 0.0, "cgst": 0.0, "sgst": 0.0, "igst": 0.0, "total": 0.0}
         for r_idx, row in enumerate(rows):
@@ -153,11 +165,30 @@ class GstReportsScreen(QWidget):
                 if key in row:
                     totals[key] += row[key]
 
+        if cancelled:
+            heading_row = len(rows)
+            heading = QTableWidgetItem("CANCELLED INVOICES — not included in the totals")
+            bold = QFont()
+            bold.setBold(True)
+            heading.setFont(bold)
+            heading.setForeground(QBrush(QColor("#b00020")))
+            self.table.setItem(heading_row, 0, heading)
+            self.table.setSpan(heading_row, 0, 1, len(columns))
+            grey, struck = QBrush(QColor("#888888")), QFont()
+            struck.setStrikeOut(True)
+            for offset, row in enumerate(cancelled, start=1):
+                for c_idx, (_, key) in enumerate(columns):
+                    item = QTableWidgetItem(self._format(key, row.get(key)))
+                    item.setForeground(grey)
+                    item.setFont(struck)
+                    self.table.setItem(heading_row + offset, c_idx, item)
+
         self.table.resizeColumnsToContents()
         self.totals_label.setText(
             f"Rows: {len(rows)}   |   Taxable: {totals['taxable_amount']:,.2f}   "
             f"CGST: {totals['cgst']:,.2f}   SGST: {totals['sgst']:,.2f}   "
             f"IGST: {totals['igst']:,.2f}   Total: {totals['total']:,.2f}"
+            + (f"   |   {len(cancelled)} cancelled invoice(s) listed, excluded" if cancelled else "")
         )
 
     def export_to_excel(self):
@@ -166,6 +197,7 @@ class GstReportsScreen(QWidget):
         date_to = self.date_to.date().toPython()
         try:
             rows = view["fetch"](date_from, date_to)
+            cancelled = view["cancelled"](date_from, date_to) if "cancelled" in view else []
         except Exception:
             logger.exception("Failed to load GST report for export")
             QMessageBox.critical(self, "Error", "Could not load data to export.")
@@ -178,6 +210,7 @@ class GstReportsScreen(QWidget):
 
         try:
             from openpyxl import Workbook
+            from openpyxl.styles import Font
 
             columns = view["columns"]
             wb = Workbook()
@@ -189,6 +222,17 @@ class GstReportsScreen(QWidget):
                     row.get(key) if key in _NUMERIC_KEYS else self._format(key, row.get(key))
                     for _, key in columns
                 ])
+            if cancelled:
+                ws.append([])
+                ws.append(["CANCELLED INVOICES — not included in the totals above"])
+                ws.cell(ws.max_row, 1).font = Font(bold=True)
+                ws.append([h for h, _ in columns] + ["Cancelled On", "Reason"])
+                for row in cancelled:
+                    ws.append([
+                        row.get(key) if key in _NUMERIC_KEYS else self._format(key, row.get(key))
+                        for _, key in columns
+                    ] + [self._format("cancelled_date", row.get("cancelled_date")),
+                         row.get("cancellation_reason") or ""])
             wb.save(path)
         except Exception:
             logger.exception("Failed to export GST report to Excel")

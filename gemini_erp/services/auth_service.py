@@ -215,6 +215,27 @@ class AuthService:
             return False
         return module_key in permitted
 
+    @staticmethod
+    def require_role(session: Session, username: str | None, allowed_roles, action: str) -> User:
+        """Return the active user named ``username`` if their role is one of
+        ``allowed_roles``; otherwise raise PermissionError naming ``action``.
+
+        For actions stricter than tab-level permissions (e.g. cancelling an
+        invoice is Administrator-only even though Accountants see the Sales
+        Log). Services call this themselves so hiding a button is never the
+        only control.
+        """
+        user = (
+            session.query(User)
+            .options(joinedload(User.role))
+            .filter(User.username == (username or ""), User.is_deleted == false())
+            .first()
+        )
+        if user is None or not user.is_active or user.role is None \
+                or user.role.name not in allowed_roles:
+            raise PermissionError(f"Only {' or '.join(allowed_roles)} can {action}.")
+        return user
+
 
 def ensure_roles_and_admin(session: Session) -> None:
     """Seed the four roles and a default admin. Idempotent (like ensure_system_accounts).

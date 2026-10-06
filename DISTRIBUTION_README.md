@@ -78,6 +78,12 @@ be by a Windows account that SQL Server allows to back up the database
 not start. If you run the mobile
 companion API, start it only after that first launch.
 
+**After updating to 1.2.0:** an Administrator should open **Settings → GST
+returns** and set "GSTR-1 has been filed up to" to the last date you have
+filed GSTR-1 for. Invoices on or before that date cannot then be cancelled or
+renumbered (the correct route there is a credit note). Update it each month
+after filing.
+
 ### Going back to the previous version (rollback)
 
 Updates only ever ADD to the database, so going back is simply:

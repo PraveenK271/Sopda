@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from sqlalchemy import String, Text
+from datetime import date as date_type
+
+from sqlalchemy import Date, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from database import Base
@@ -34,3 +36,10 @@ class CompanyProfile(Base, AuditMixin):
     # Terms & conditions printed on the invoice, one per line (newline-separated).
     terms: Mapped[str | None] = mapped_column(Text, nullable=True)
     logo_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
+
+    # Patch v1.2.0 (migration 004): the last date for which GSTR-1 has been
+    # filed. Invoices dated on or before it cannot be cancelled or renumbered
+    # (the correct route is a credit note / amendment). NULL = never set, in
+    # which case those actions warn instead of block. A calendar date, like
+    # every other business date in the app.
+    gst_filed_upto_date: Mapped[date_type | None] = mapped_column(Date, nullable=True)

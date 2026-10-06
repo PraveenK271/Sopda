@@ -76,6 +76,21 @@ backup (see `CLAUDE.md` → Patching rules).
 back, incl. goods-return credit notes); sales credit notes / invoice
 cancellation; editing purchase invoices with the reverse-and-re-post pattern.
 
+### v1.2.0 — see `INSTRUCTIONS_PATCH_V1_2.md`, `CHECKLIST_PATCH_V1_2.md`
+
+- Cancel a sales invoice — reversing stock + accounting, number kept in the
+  sequence, invoice stays readable and marked CANCELLED (Administrator only)
+- Correct a mistyped invoice number — label only, no stock/accounting movement
+- "GST returns filed up to" date in Settings — blocks cancel / renumber in
+  filed periods
+- Cancelled invoices excluded from every sales and GST figure and listed
+  separately; new Cancelled Invoices report and Invoice Sequence Check
+
+**Still open after v1.2.0:** sales-side credit note (so an invoice in a filed
+GST period still cannot be voided in the software); cancelling or editing
+(reverse-and-re-post) purchase invoices; reversing a receipt or payment;
+sales-side discounts; Purchase Return.
+
 ---
 
 ## How to use these three files

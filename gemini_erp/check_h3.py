@@ -54,13 +54,16 @@ def main():
 
     svc = ImportService()
     stamp = datetime.now().strftime("%H%M%S%f")
+    # Sales invoice numbers must obey GST Rule 46(b) (<= 16 chars, v1.2.0), so
+    # they use a shorter per-run reference than the item/party names.
+    ref = stamp[-8:]
     tmp = tempfile.mkdtemp(prefix="h3_")
 
     a = ItemService().add_item(code=f"H3-A-{stamp}", name="Item A", unit="PCS", gst_rate=18, opening_stock=100, created_by="check_h3")
     b = ItemService().add_item(code=f"H3-B-{stamp}", name="Item B", unit="PCS", gst_rate=18, opening_stock=100, created_by="check_h3")
     ca, cb = a.code, b.code
 
-    inv1, inv2, inv3 = f"H3-INV1-{stamp}", f"H3-INV2-{stamp}", f"H3-INV3-{stamp}"
+    inv1, inv2, inv3 = f"H3I1-{ref}", f"H3I2-{ref}", f"H3I3-{ref}"
     # invoice_no, date, customer, gstin, state, item, qty, rate, invoice_total
     valid_rows = [
         # INV1 — AP customer, CGST+SGST. taxable 2000, gst 360 -> 2360
@@ -127,7 +130,7 @@ def main():
     # --- negative stock is allowed and recorded in the ImportLog notes ---
     neg = ItemService().add_item(code=f"H3-NEG-{stamp}", name="Scarce Item", unit="PCS",
                                  gst_rate=18, opening_stock=2, created_by="check_h3")
-    neg_inv = f"H3-NEG-INV-{stamp}"
+    neg_inv = f"H3N-{ref}"
     neg_file = os.path.join(tmp, "neg.xlsx")
     _write(neg_file, [[neg_inv, "08-04-2026", "AP Cust", "37AAAAA0000A1Z5", AP, neg.code, 5, 100, 590]])
     neg_log = svc.import_sales(neg_file, "check_h3")

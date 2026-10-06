@@ -29,7 +29,7 @@ from services.customer_service import CustomerService
 from services.gst_service import split_gst
 from services.opening_balance_service import OpeningBalanceService
 from services.purchase_service import PurchaseService
-from services.sales_service import SalesService
+from services.sales_service import SalesService, validate_invoice_no
 from services.supplier_service import SupplierService
 
 logger = logging.getLogger(__name__)
@@ -441,6 +441,13 @@ class ImportService:
             if text not in checked_refs:
                 checked_refs.add(text)
                 if defn.key == "SALES":
+                    # Same number rule as a new invoice (GST Rule 46(b)), so a
+                    # bad number is reported at VALIDATE, not mid-import.
+                    try:
+                        validate_invoice_no(text)
+                    except ValueError as exc:
+                        report.add_error(row_no, str(exc))
+                    # Cancelled invoices count: a cancelled number is never reused.
                     dup = (
                         session.query(SalesInvoice.id)
                         .filter(SalesInvoice.invoice_no == text, SalesInvoice.is_deleted == false())
